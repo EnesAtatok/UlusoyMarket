@@ -1,9 +1,14 @@
 # Canlı veriler: müşteri adları, telefonları, adresleri — depoya girmemeli
-data/db.json
-data/*.backup.json
+# (data/ altında yalnızca örnek katalog seed.json depoda kalır; geçici dosyalar, oturumlar, yedekler dahil gerisi girmez)
+data/*
+!data/seed.json
 
 # Admin panelinden yüklenen ürün fotoğrafları
 public/uploads/
+
+# Gizli ayarlar (docker compose .env: ADMIN_PASSWORD vb.)
+.env
+.env.*
 
 # Genel
 node_modules/

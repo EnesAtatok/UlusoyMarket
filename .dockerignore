@@ -1,0 +1,18 @@
+# Canlı veri ve yedekler imaja girmez
+data/*
+!data/seed.json
+public/uploads/
+
+.git
+.gitignore
+.claude
+.env
+.env.*
+node_modules
+test
+docs
+*.log
+*.bat
+Dockerfile
+docker-compose.yml
+.dockerignore

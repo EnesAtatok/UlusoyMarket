@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title Mahalle Market Sunucusu
+title Ulusoy Market Sunucusu
 cd /d "%~dp0"
 
 where node >nul 2>nul
@@ -22,7 +22,13 @@ if not errorlevel 1 (
 echo Sunucu baslatiliyor...
 start "" /min powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep 2; Start-Process 'http://localhost:3000'; Start-Process 'http://localhost:3000/panel'"
 echo.
+echo  Magaza:          http://localhost:3000
+echo  Yonetim paneli:  http://localhost:3000/panel
+echo  Panel girisi:    kullanici adi "admin", sifre ilk kurulumda ADMIN_PASSWORD
+echo                   (verilmediyse admin123 - panelden Hesabim ile hemen degistirin)
+echo.
 echo  Bu pencere acik kaldigi surece market calisir. Kapatmak icin pencereyi kapatin.
+echo  Veriler data\ klasorundedir (db.json, backups\, uploads\).
 echo.
 node server.js
 pause

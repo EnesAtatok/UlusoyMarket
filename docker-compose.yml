@@ -1,0 +1,29 @@
+services:
+  market:
+    build: .
+    image: ulusoy-market:latest
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      DATA_DIR: /data
+      # İlk kurulumda "admin" kullanıcısının şifresi (sonra panelden değiştirin)
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?ADMIN_PASSWORD tanımlayın}"
+      PUBLIC_URL: "${PUBLIC_URL:-}"
+      # Önünde Caddy/nginx gibi bir ters vekil varsa 1
+      TRUST_PROXY: "${TRUST_PROXY:-1}"
+    volumes:
+      - market-data:/data
+    # Sertleştirme: uygulama yalnızca /data'ya yazar; kök dosya sistemi salt okunur, ek yetki yok
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Yalnızca makinenin kendisinden erişilir; dışarıya Caddy açar (docs/DEPLOY.md)
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  market-data:

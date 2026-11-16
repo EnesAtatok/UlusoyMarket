@@ -1,11 +1,12 @@
 {
   "name": "ulusoy-market",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Mahalle marketleri için web tabanlı sipariş ve yönetim uygulaması",
+  "description": "Ulusoy Market online sipariş ve yönetim uygulaması (bağımlılıksız Node.js)",
   "engines": { "node": ">=18" },
   "scripts": {
     "start": "node server.js",
-    "reset": "node -e \"require('fs').rmSync('data/db.json',{force:true})\""
+    "test": "node --test",
+    "reset": "node -e \"const fs=require('fs');if(fs.existsSync('data/db.json')){fs.mkdirSync('data/backups',{recursive:true});const n='data/backups/sifirlama-oncesi-'+Date.now()+'.json';fs.renameSync('data/db.json',n);console.log('Eski veri tasindi: '+n)}\""
   }
 }

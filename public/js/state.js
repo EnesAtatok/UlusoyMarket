@@ -1,0 +1,222 @@
+// Uygulama durumu, sepet işlemleri ve sunucu teklifi (POST /api/cart/quote).
+import { load, save, api, debounce, fold } from "./lib.js";
+
+// Reyon adına göre yer tutucu rengi (0 yeşil, 1 mavi, 2 mercan, 3 sarı, 4 lila, 5 turkuaz, 6 gül, 7 kum)
+const TINTS = [
+  ["meyve", 0], ["sebze", 0], ["sut", 1], ["kahvalti", 1], ["sarkuteri", 2], ["et", 2], ["firin", 3], ["ekmek", 3],
+  ["temel", 7], ["bakliyat", 7], ["soguk", 5], ["icecek", 5], ["sicak", 6], ["cay", 6], ["kahve", 6],
+  ["atistirmalik", 3], ["cerez", 3], ["cikolata", 2], ["sekerleme", 6], ["dondurma", 4], ["tatli", 4],
+  ["temizlik", 5], ["kisisel", 4], ["bakim", 4], ["bebek", 6], ["ev", 7], ["pratik", 7],
+];
+function tintFor(name, i) {
+  const words = fold(name).split(/[^a-z]+/);
+  for (const [k, t] of TINTS) if (words.includes(k)) return t;
+  return i % 8;
+}
+
+const listeners = {};
+export const on = (ev, fn) => (listeners[ev] ||= []).push(fn);
+export const emit = (ev, data) => (listeners[ev] || []).forEach((fn) => fn(data));
+
+const profile = load("profile", {});
+
+export const S = {
+  store: null, // GET /api/store yanıtı
+  products: [],
+  byId: new Map(),
+  categories: [],
+  catById: new Map(),
+  cart: sanitizeCartShape(load("cart", {})), // { productId: adet } — eski prototiple aynı anahtar
+  favs: new Set(load("favs", [])),
+  myOrders: load("myOrders", []), // [{ id, token }] — eski prototiple aynı anahtar
+  orderData: [], // takip nesneleri
+  ordersLoaded: false,
+  profile, // { name, phone, payment, substitution }
+  addresses: load("addresses", []), // [{ id, zoneId, address }]
+  delivery: { type: profile.type === "gelal" ? "gelal" : "teslimat", zoneId: profile.zoneId ?? null },
+  coupon: load("coupon", ""), // uygulanmış kupon kodu
+  couponMsg: null, // { valid, message, code }
+  quote: null,
+  quoteError: null,
+  quoteLoading: false,
+  notices: [], // sepetten çıkarılan / adedi düşürülen ürün mesajları
+  offline: !navigator.onLine,
+};
+
+function sanitizeCartShape(c) {
+  const out = {};
+  if (c && typeof c === "object" && !Array.isArray(c)) {
+    for (const [k, v] of Object.entries(c)) {
+      const q = Math.floor(Number(v));
+      if (Number(k) > 0 && q > 0) out[k] = Math.min(q, 99);
+    }
+  }
+  return out;
+}
+
+export function setStore(data) {
+  S.store = data;
+  S.products = data.products || [];
+  S.byId = new Map(S.products.map((p) => [p.id, p]));
+  S.categories = (data.categories || []).filter((c) => S.products.some((p) => p.categoryId === c.id));
+  S.catById = new Map((data.categories || []).map((c, i) => [c.id, { ...c, tint: tintFor(c.name, i) }]));
+  // Artık satılmayan ürünleri sepetten çıkar, adetleri sınıra çek
+  let changed = false;
+  for (const id of Object.keys(S.cart)) {
+    const p = S.byId.get(Number(id));
+    if (!p || p.soldOut || !p.maxQty) {
+      delete S.cart[id];
+      changed = true;
+    } else if (S.cart[id] > p.maxQty) {
+      S.cart[id] = p.maxQty;
+      changed = true;
+    }
+  }
+  // Bölge artık yoksa seçimi kaldır
+  if (S.delivery.zoneId && !zones().some((z) => z.id === S.delivery.zoneId)) S.delivery.zoneId = null;
+  if (S.delivery.type === "gelal" && !data.ordering?.pickupEnabled) S.delivery.type = "teslimat";
+  if (changed) saveCart();
+}
+
+export const zones = () => S.store?.zones || [];
+export const zoneById = (id) => zones().find((z) => z.id === Number(id)) || null;
+export const status = () => S.store?.status || {};
+export const storeInfo = () => S.store?.store || {};
+
+// ---------- Sepet ----------
+export function saveCart() {
+  save("cart", S.cart);
+}
+export const qtyOf = (id) => S.cart[id] || 0;
+export function setQty(id, qty, { silent = false } = {}) {
+  const p = S.byId.get(Number(id));
+  let q = Math.max(0, Math.floor(qty));
+  if (!p || p.soldOut) q = 0;
+  else q = Math.min(q, p.maxQty || 99);
+  if (q <= 0) delete S.cart[id];
+  else S.cart[id] = q;
+  saveCart();
+  if (!silent) emit("cart", { id: Number(id), qty: q });
+  return q;
+}
+export function clearCart() {
+  S.cart = {};
+  saveCart();
+  emit("cart", {});
+}
+export const cartLines = () =>
+  Object.entries(S.cart)
+    .map(([id, qty]) => ({ product: S.byId.get(Number(id)), qty }))
+    .filter((l) => l.product);
+export const cartCount = () => cartLines().reduce((s, l) => s + l.qty, 0);
+/** Yalnızca anlık gösterim için; ödeme öncesi tutarı sunucu teklifi belirler */
+export const cartLocalTotal = () => Math.round(cartLines().reduce((s, l) => s + l.product.price * l.qty, 0) * 100) / 100;
+
+export function toggleFav(id) {
+  if (S.favs.has(id)) S.favs.delete(id);
+  else S.favs.add(id);
+  save("favs", [...S.favs]);
+  emit("favs", id);
+  return S.favs.has(id);
+}
+
+export function setDelivery(patch) {
+  Object.assign(S.delivery, patch);
+  S.profile.type = S.delivery.type;
+  S.profile.zoneId = S.delivery.zoneId;
+  save("profile", S.profile);
+  emit("delivery");
+  requestQuote();
+}
+export function saveProfile(patch) {
+  Object.assign(S.profile, patch);
+  save("profile", S.profile);
+}
+
+export function setCoupon(code) {
+  S.coupon = String(code || "").trim();
+  S.couponMsg = null;
+  save("coupon", S.coupon || null);
+  requestQuote.flush();
+}
+
+// ---------- Sunucu teklifi ----------
+let quoteCtl = null;
+let quoteSeq = 0;
+export function quoteBody() {
+  return {
+    items: cartLines().map((l) => ({ productId: l.product.id, qty: l.qty })),
+    type: S.delivery.type,
+    zoneId: S.delivery.type === "teslimat" ? S.delivery.zoneId : undefined,
+    couponCode: S.coupon || undefined,
+    phone: /^0\d{10}$/.test(S.profile.phone || "") ? S.profile.phone : undefined,
+  };
+}
+
+async function runQuote() {
+  if (!S.store) return;
+  if (!cartLines().length) {
+    S.quote = null;
+    S.quoteLoading = false;
+    emit("quote");
+    return;
+  }
+  quoteCtl?.abort();
+  quoteCtl = new AbortController();
+  const seq = ++quoteSeq;
+  S.quoteLoading = true;
+  emit("quoteLoading");
+  try {
+    const q = await api("/api/cart/quote", { method: "POST", body: quoteBody(), signal: quoteCtl.signal });
+    if (seq !== quoteSeq) return;
+    applyQuote(q);
+    S.quoteError = null;
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    S.quoteError = e.message;
+  } finally {
+    if (seq === quoteSeq) {
+      S.quoteLoading = false;
+      emit("quote");
+    }
+  }
+}
+
+/** Teklifi uygular: sunucunun çıkardığı/düşürdüğü kalemleri sepete yansıtır, geçersiz kuponu kaldırır */
+export function applyQuote(q) {
+  S.quote = q;
+  const notices = [];
+  for (const r of q.removed || []) {
+    if (S.cart[r.productId]) {
+      delete S.cart[r.productId];
+      const name = r.name || S.byId.get(r.productId)?.name;
+      // Sunucu nedeni ürün adını zaten içeriyorsa ("X" tükendi.) ad tekrar yazılmaz
+      notices.push(name && !String(r.reason).includes(name) ? `${name}: ${r.reason}` : r.reason);
+    }
+  }
+  for (const a of q.adjusted || []) {
+    if (S.cart[a.productId] && S.cart[a.productId] !== a.qty) {
+      S.cart[a.productId] = a.qty;
+      notices.push(a.reason);
+    }
+  }
+  if (notices.length) {
+    S.notices = notices;
+    saveCart();
+    emit("cart", {});
+  }
+  if (q.coupon) {
+    S.couponMsg = { valid: !!q.coupon.valid, message: q.coupon.message, code: q.coupon.code };
+    if (!q.coupon.valid) {
+      // Geçersiz kupon siparişi reddettirir: sepetten kaldır, mesajı göster
+      S.coupon = "";
+      save("coupon", null);
+    }
+  }
+}
+
+export const requestQuote = debounce(runQuote, 250);
+
+/** Sepet ekranında yok sayılabilecek hata (bölge henüz seçilmedi) */
+export const blockingErrors = (q, { ignoreZone = false } = {}) =>
+  (q?.errors || []).filter((e) => !(ignoreZone && e.code === "BOLGE_SECIN"));

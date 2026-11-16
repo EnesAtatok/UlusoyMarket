@@ -1,36 +1,112 @@
 <!doctype html>
 <html lang="tr">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mahalle Market</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ulusoy Market · Gece de açık mahalle marketi</title>
+  <meta name="theme-color" content="#0F1B33">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="/img/favicon.png" type="image/png" sizes="48x48">
+  <link rel="icon" href="/img/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/img/icon-192.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/bricolage-grotesque-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/app.js"></script>
 </head>
-<body>
-  <div class="topbar">
-    <div class="topbar-inner">
-      <a class="logo" href="/">🛒 Mahalle Market</a>
-      <input id="search" class="search" type="search" placeholder="Ürün ara…" />
-      <button id="openOrders" class="btn btn-ghost cart-btn">📦 Siparişlerim <span id="activeCount" class="badge alt" hidden></span></button>
-      <button id="openCart" class="btn cart-btn">Sepet <span id="cartCount" class="badge">0</span></button>
+<body class="shop">
+  <a class="skip-link" href="#main">İçeriğe geç</a>
+
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-basket" viewBox="0 0 24 24"><path d="m15 11-1 9"/><path d="m19 11-4-7"/><path d="M2 11h20"/><path d="m3.5 11 1.6 7.4a2 2 0 0 0 2 1.6h9.8a2 2 0 0 0 2-1.6l1.7-7.4"/><path d="M4.5 15.5h15"/><path d="m5 11 4-7"/><path d="m9 11 1 9"/></symbol>
+    <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M6 2.5h12v19l-3-2-3 2-3-2-3 2Z"/><path d="M9 7.5h6M9 11.5h6M9 15.5h3.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M9 10.5c.5 1.8 2.2 3.5 4.5 4.3l1.3-1.2 1.7.8"/><path d="M9 10.5 10.2 9l-.8-1.7"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7Z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" class="fill"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4Z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
+    <symbol id="i-truck" viewBox="0 0 24 24"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.6a1 1 0 0 0-.2-.6l-3.5-4.4a1 1 0 0 0-.8-.4H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></symbol>
+    <symbol id="i-store" viewBox="0 0 24 24"><path d="M3 9 4.5 4h15L21 9"/><path d="M3 9h18v1.5a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0Z"/><path d="M5 13v8h14v-8"/><path d="M10 21v-5h4v5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5M12 16h.01"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/></symbol>
+    <symbol id="i-offline" viewBox="0 0 24 24"><path d="m2 2 20 20"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 5.2-2.8"/><path d="M19 12.9a10 10 0 0 0-2.3-1.6"/><path d="M2 8.8a15 15 0 0 1 4.2-2.6"/><path d="M22 8.8A15 15 0 0 0 10.7 5"/><path d="M12 20h.01"/></symbol>
+    <symbol id="i-insta" viewBox="0 0 24 24"><rect x="2.5" y="2.5" width="19" height="19" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/></symbol>
+    <symbol id="i-package" viewBox="0 0 24 24"><path d="M11 21.7a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></symbol>
+  </svg>
+
+  <div class="announce" id="announce" hidden></div>
+
+  <header class="topbar" id="topbar">
+    <div class="topbar-row">
+      <a class="brand" href="#/" aria-label="Ulusoy Market ana sayfa">
+        <img class="brand-logo" src="/img/logo.webp" alt="" width="36" height="38">
+        <span class="brand-name">Ulusoy<span class="brand-name-2"> Market</span></span>
+      </a>
+      <span class="status-pill" id="statusPill" data-state="yukleniyor"><span class="status-dot" aria-hidden="true"></span><span class="status-text">Durum yükleniyor</span></span>
+      <form class="searchbar" id="searchForm" role="search">
+        <label class="sr-only" for="q">Ürün ara</label>
+        <svg class="i search-icon" aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="q" name="q" type="search" placeholder="Süt, ekmek, deterjan ara" autocomplete="off" enterkeyhint="search" spellcheck="false">
+        <button class="search-clear" type="button" id="qClear" aria-label="Aramayı temizle" hidden><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </form>
+      <nav class="top-links" aria-label="Ana menü">
+        <a href="#/kategoriler" data-nav="kategoriler">Kategoriler</a>
+        <a href="#/siparislerim" data-nav="siparislerim">Siparişlerim <span class="count-badge" data-badge="orders" hidden></span></a>
+      </nav>
+      <div class="top-actions">
+        <a class="icon-btn" id="topCall" href="tel:05373119696" aria-label="Marketi ara"><svg class="i" aria-hidden="true"><use href="#i-phone"/></svg></a>
+        <a class="icon-btn" id="topWa" href="https://wa.me/905373119696" rel="noopener" target="_blank" aria-label="WhatsApp'tan yaz"><svg class="i" aria-hidden="true"><use href="#i-chat"/></svg></a>
+        <button class="icon-btn" id="themeBtn" type="button" aria-label="Tema: sistem"><svg class="i" aria-hidden="true"><use href="#i-auto"/></svg></button>
+        <a class="top-cart" href="#/sepet" data-nav="sepet"><svg class="i" aria-hidden="true"><use href="#i-basket"/></svg><span>Sepet</span><span class="count-badge" data-badge="cart" hidden></span></a>
+      </div>
     </div>
-    <div id="orderBanner" class="order-banner" hidden></div>
-    <nav id="cats" class="cats"></nav>
+  </header>
+
+  <div class="net-banner" id="netBanner" role="status" hidden><svg class="i" aria-hidden="true"><use href="#i-offline"/></svg><span>İnternet bağlantınız yok. Bağlantı gelince sayfa kendini yeniler.</span></div>
+  <div class="order-strip" id="orderStrip" hidden></div>
+
+  <div class="layout" id="layout">
+    <main id="main" class="main" tabindex="-1">
+      <div class="boot-skeleton" aria-hidden="true">
+        <div class="sk sk-hero"></div>
+        <div class="sk-row"><div class="sk sk-tile"></div><div class="sk sk-tile"></div><div class="sk sk-tile"></div><div class="sk sk-tile"></div></div>
+        <div class="sk-row"><div class="sk sk-card"></div><div class="sk sk-card"></div></div>
+      </div>
+      <p class="sr-only" role="status">Mağaza yükleniyor</p>
+    </main>
+    <aside class="cart-aside" id="cartAside" aria-label="Sepetiniz"></aside>
   </div>
 
-  <main id="products"></main>
+  <footer class="site-footer" id="footer"></footer>
 
-  <div id="overlay" class="overlay"></div>
-  <aside id="drawer" class="drawer" aria-label="Sepet">
-    <header>
-      <h2 id="drawerTitle">Sepetim</h2>
-      <button id="closeCart" class="icon-btn" aria-label="Kapat">×</button>
-    </header>
-    <div id="drawerBody" class="body"></div>
-    <footer id="drawerFooter"></footer>
-  </aside>
+  <div class="cart-bar" id="cartBar" hidden></div>
 
-  <div id="toast" class="toast"></div>
-  <script src="app.js"></script>
+  <nav class="bottom-nav" aria-label="Alt menü">
+    <a href="#/" data-nav="home"><svg class="i" aria-hidden="true"><use href="#i-home"/></svg><span>Ana sayfa</span></a>
+    <a href="#/kategoriler" data-nav="kategoriler"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Kategoriler</span></a>
+    <a href="#/sepet" data-nav="sepet"><span class="nav-ico"><svg class="i" aria-hidden="true"><use href="#i-basket"/></svg><span class="count-badge" data-badge="cart" hidden></span></span><span>Sepet</span></a>
+    <a href="#/siparislerim" data-nav="siparislerim"><span class="nav-ico"><svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg><span class="count-badge" data-badge="orders" hidden></span></span><span>Siparişlerim</span></a>
+  </nav>
+
+  <dialog class="sheet" id="productDialog" aria-labelledby="pdTitle"></dialog>
+  <dialog class="sheet sheet-small" id="confirmDialog" aria-labelledby="cdTitle"></dialog>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 </body>
 </html>
