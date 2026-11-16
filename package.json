@@ -1,0 +1,11 @@
+{
+  "name": "ulusoy-market",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mahalle marketleri için web tabanlı sipariş ve yönetim uygulaması",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "reset": "node -e \"require('fs').rmSync('data/db.json',{force:true})\""
+  }
+}

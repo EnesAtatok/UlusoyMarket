@@ -1,0 +1,32 @@
+{
+  "categories": [
+    { "id": 1, "name": "Meyve & Sebze", "emoji": "🥦" },
+    { "id": 2, "name": "Süt & Kahvaltılık", "emoji": "🥛" },
+    { "id": 3, "name": "Fırın", "emoji": "🥖" },
+    { "id": 4, "name": "İçecek", "emoji": "🧃" },
+    { "id": 5, "name": "Atıştırmalık", "emoji": "🍫" },
+    { "id": 6, "name": "Temizlik", "emoji": "🧽" }
+  ],
+  "products": [
+    { "id": 1, "name": "Domates", "price": 34.9, "unit": "kg", "categoryId": 1, "emoji": "🍅", "hidden": false },
+    { "id": 2, "name": "Salatalık", "price": 29.9, "unit": "kg", "categoryId": 1, "emoji": "🥒", "hidden": false },
+    { "id": 3, "name": "Muz", "price": 64.5, "unit": "kg", "categoryId": 1, "emoji": "🍌", "hidden": false },
+    { "id": 4, "name": "Elma (Starking)", "price": 39.9, "unit": "kg", "categoryId": 1, "emoji": "🍎", "hidden": false },
+    { "id": 5, "name": "Patates", "price": 22.5, "unit": "kg", "categoryId": 1, "emoji": "🥔", "hidden": false },
+    { "id": 6, "name": "Günlük Süt 1 L", "price": 32.5, "unit": "adet", "categoryId": 2, "emoji": "🥛", "hidden": false },
+    { "id": 7, "name": "Beyaz Peynir 500 g", "price": 149.9, "unit": "adet", "categoryId": 2, "emoji": "🧀", "hidden": false },
+    { "id": 8, "name": "Yumurta 15'li", "price": 89.9, "unit": "paket", "categoryId": 2, "emoji": "🥚", "hidden": false },
+    { "id": 9, "name": "Tereyağı 250 g", "price": 124.5, "unit": "adet", "categoryId": 2, "emoji": "🧈", "hidden": false },
+    { "id": 10, "name": "Ekmek", "price": 12.5, "unit": "adet", "categoryId": 3, "emoji": "🍞", "hidden": false },
+    { "id": 11, "name": "Simit", "price": 15, "unit": "adet", "categoryId": 3, "emoji": "🥯", "hidden": false },
+    { "id": 12, "name": "Kruvasan", "price": 27.5, "unit": "adet", "categoryId": 3, "emoji": "🥐", "hidden": false },
+    { "id": 13, "name": "Su 1,5 L", "price": 9.9, "unit": "adet", "categoryId": 4, "emoji": "💧", "hidden": false },
+    { "id": 14, "name": "Portakal Suyu 1 L", "price": 54.9, "unit": "adet", "categoryId": 4, "emoji": "🧃", "hidden": false },
+    { "id": 15, "name": "Türk Kahvesi 100 g", "price": 79.9, "unit": "adet", "categoryId": 4, "emoji": "☕", "hidden": false },
+    { "id": 16, "name": "Çikolata", "price": 34.5, "unit": "adet", "categoryId": 5, "emoji": "🍫", "hidden": false },
+    { "id": 17, "name": "Cips", "price": 42.9, "unit": "adet", "categoryId": 5, "emoji": "🥔", "hidden": false },
+    { "id": 18, "name": "Bulaşık Deterjanı", "price": 89.9, "unit": "adet", "categoryId": 6, "emoji": "🧴", "hidden": false },
+    { "id": 19, "name": "Sünger 3'lü", "price": 24.9, "unit": "paket", "categoryId": 6, "emoji": "🧽", "hidden": false }
+  ],
+  "orders": []
+}

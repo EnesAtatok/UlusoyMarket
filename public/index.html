@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mahalle Market</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <a class="logo" href="/">🛒 Mahalle Market</a>
+      <input id="search" class="search" type="search" placeholder="Ürün ara…" />
+      <button id="openOrders" class="btn btn-ghost cart-btn">📦 Siparişlerim <span id="activeCount" class="badge alt" hidden></span></button>
+      <button id="openCart" class="btn cart-btn">Sepet <span id="cartCount" class="badge">0</span></button>
+    </div>
+    <div id="orderBanner" class="order-banner" hidden></div>
+    <nav id="cats" class="cats"></nav>
+  </div>
+
+  <main id="products"></main>
+
+  <div id="overlay" class="overlay"></div>
+  <aside id="drawer" class="drawer" aria-label="Sepet">
+    <header>
+      <h2 id="drawerTitle">Sepetim</h2>
+      <button id="closeCart" class="icon-btn" aria-label="Kapat">×</button>
+    </header>
+    <div id="drawerBody" class="body"></div>
+    <footer id="drawerFooter"></footer>
+  </aside>
+
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>

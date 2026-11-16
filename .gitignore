@@ -1,0 +1,13 @@
+# Canlı veriler: müşteri adları, telefonları, adresleri — depoya girmemeli
+data/db.json
+data/*.backup.json
+
+# Admin panelinden yüklenen ürün fotoğrafları
+public/uploads/
+
+# Genel
+node_modules/
+.claude/
+*.log
+.DS_Store
+Thumbs.db
