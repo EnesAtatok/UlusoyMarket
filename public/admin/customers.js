@@ -1,5 +1,5 @@
 // Müşteriler: siparişlerden türetilen liste, arama, ayrıntı (sipariş geçmişi), engelle / engeli kaldır (tek ve toplu).
-import { state, $, $$, esc, icon, api, tl, toast, toastErr, isAdmin, openModal, confirmDialog, showBulk, hideBulk, fmtDate, fmtDateTime, debounce, fmtPhone, waNumber, nav } from "./core.js";
+import { state, $, $$, esc, icon, api, tl, toast, toastErr, isAdmin, openModal, confirmDialog, showBulk, hideBulk, fmtDate, fmtDateTime, debounce, fmtPhone, waNumber, nav, download } from "./core.js";
 
 const cs = { q: "", blocked: false, list: [], total: 0, page: 1, pages: 1, sel: new Set(), loading: false };
 const BADGE = { Yeni: "b-new", Hazırlanıyor: "b-prep", Yolda: "b-road", "Teslim edildi": "b-done", İptal: "b-cancel" };
@@ -126,6 +126,8 @@ async function openCustomer(phone) {
         <a class="btn" href="https://wa.me/${waNumber(c.phone)}" target="_blank" rel="noopener">${icon("message")} WhatsApp</a>
         ${isAdmin() ? `<button type="button" class="btn ${c.blocked ? "" : "btn-danger-ghost"}" id="cuBlockBtn">${icon("ban")} ${c.blocked ? "Engeli kaldır" : "Engelle"}</button>` : ""}
       </div>
+      ${isAdmin() ? `<div class="callout">${icon("shield")}<div style="flex:1"><b>KVKK başvurusu</b> (30 gün içinde yanıtlayın): müşterinin verilerini dosya olarak verin ya da silin.
+        <div class="row-flex mt"><button type="button" class="btn btn-sm" id="cuExport">${icon("download", "i-sm")} Verilerini dışa aktar</button><button type="button" class="btn btn-sm btn-danger-ghost" id="cuAnon">${icon("trash", "i-sm")} Verilerini sil / anonimleştir</button></div></div></div>` : ""}
       <h4>Sipariş geçmişi (${data.orders.length})</h4>
       <div class="list">${data.orders.length ? data.orders.map((o) => `<a class="lrow" data-link href="/panel/siparisler/${o.id}" style="text-decoration:none;color:inherit">
         <div class="lrow-main"><div class="lrow-title">#${o.id} <span class="badge ${BADGE[o.status]}">${esc(o.status)}</span></div>
@@ -144,6 +146,44 @@ async function openCustomer(phone) {
       load();
     } catch (e) { toastErr(e); }
   });
+  const ex = $("#cuExport");
+  if (ex) ex.addEventListener("click", async () => {
+    ex.disabled = true; ex.classList.add("is-busy");
+    try {
+      const n = await download(`/api/admin/customers/${encodeURIComponent(c.phone)}/export`, "musteri-verisi.json");
+      toast(`${n} indirildi. Dosyayı yalnızca başvuru sahibine, güvenli bir yoldan iletin.`, "ok", { timeout: 8000 });
+    } catch (e) { toastErr(e); } finally { ex.disabled = false; ex.classList.remove("is-busy"); }
+  });
+  const an = $("#cuAnon");
+  if (an) an.addEventListener("click", () => anonymizeDialog(c, data.orders, () => { ctl.close(); load(); }));
   ctl.closed.then(() => { if (location.pathname.startsWith("/panel/musteriler/")) nav.replace("/panel/musteriler"); });
+}
+
+// KVKK silme başvurusu: geri alınamaz; onay için telefonun son 4 hanesi yazdırılır
+function anonymizeDialog(c, orders, done) {
+  const digits = String(c.phone).replace(/\D/g, "").slice(-4);
+  const active = orders.filter((o) => ["Yeni", "Hazırlanıyor", "Yolda"].includes(o.status)).length;
+  const done_ = orders.length - active;
+  openModal({
+    title: "Müşteri verileri silinsin mi?", size: "narrow", danger: true, submitLabel: "Kalıcı olarak anonimleştir", guard: false,
+    body: `<div class="strong-confirm">
+      <div class="callout danger">${icon("alert")}<div><b>Bu işlem geri alınamaz.</b> ${esc(c.name || fmtPhone(c.phone))} adlı müşterinin ${done_} tamamlanmış/iptal siparişinde ad, telefon, adres, notlar, iade talebi metni ve onay IP'si silinir. Tutar, ürünler ve bölge raporlar için kalır.</div></div>
+      ${active ? `<div class="callout warn">${icon("info")}<div>${active} aktif sipariş atlanacak; önce tamamlayın ya da iptal edin, sonra tekrar çalıştırın.</div></div>` : ""}
+      <p class="small" style="margin:0">Otomatik yedeklerdeki eski kopyalar süreleri dolunca silinir (günlük yedekler 14 gün). Gerekirse önce “Verilerini dışa aktar” ile kopyasını başvuru sahibine verin.</p>
+      <label class="field"><span>Onaylamak için telefonun son 4 hanesini yazın: <span class="code">${esc(digits)}</span></span><input name="code" inputmode="numeric" maxlength="4" autocomplete="off" required></label>
+    </div>`,
+    onOpen: (f, ctl) => {
+      const ok = ctl.dlg.querySelector("[data-ok]");
+      ok.disabled = true;
+      f.code.addEventListener("input", () => { ok.disabled = f.code.value.trim() !== digits; });
+    },
+    onSubmit: async (f) => {
+      if (f.code.value.trim() !== digits) throw new Error("Son 4 hane eşleşmiyor.");
+      const r = await api(`/api/admin/customers/${encodeURIComponent(c.phone)}/anonymize`, { method: "POST", body: { confirm: true } });
+      const sk = r.skipped || [];
+      toast(`${r.processed} siparişte müşteri verisi anonimleştirildi${sk.length ? `, ${sk.length} sipariş atlandı` : ""}.`, sk.length ? "warn" : "ok", { details: [...sk.map((s) => `#${s.id}: ${s.reason}`), ...(r.note ? [r.note] : [])], timeout: 10000 });
+      done();
+    },
+  });
 }
 void state; void $$;

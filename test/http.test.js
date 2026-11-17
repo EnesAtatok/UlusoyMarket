@@ -67,7 +67,7 @@ test("ETag ve 304; HEAD gövdesiz yanıt", async () => {
   const apiHead = await raw("/api/store", {}, "HEAD");
   assert.equal(apiHead.status, 200);
   assert.equal(apiHead.body.length, 0);
-  const logo = await raw("/img/logo.webp");
+  const logo = await raw("/img/logo-96.webp");
   assert.equal(logo.headers["content-type"], "image/webp");
   assert.equal(logo.headers["cache-control"], "public, max-age=604800");
 });
@@ -105,7 +105,7 @@ test("hız sınırı: hatalı giriş denemeleri 429 + Retry-After; doğru şifre
   assert.equal(r.status, 429);
   assert.equal(r.json.code, "HIZ_SINIRI");
   assert.ok(Number(r.headers.get("retry-after")) > 0);
-  s.app.limiters.login.reset("127.0.0.1");
+  s.app.limiters.login.reset("127.0.0.1|admin"); // anahtar: IP + kullanıcı adı
   assert.equal((await s.req("POST", "/api/admin/login", { username: "admin", password: "test1234" })).status, 200);
 });
 
@@ -115,6 +115,9 @@ test("hız sınırı: sipariş ve telefonla sorgu", async () => {
   const r = await s.req("POST", "/api/orders", orderBody({ phone: "05320000003" }));
   assert.equal(r.status, 429);
   assert.match(r.json.error, /Çok fazla sipariş denemesi/);
+  // Numara + telefonla sorgu varsayılan kapalı: kapalıyken 404 (hız sınırına da sayılmaz)
+  assert.equal((await s.req("GET", "/api/orders/1?phone=05320000009")).json.code, "SORGU_KAPALI");
+  s.app.db.settings.privacy.phoneLookup = true;
   await s.req("GET", "/api/orders/1?phone=05320000009");
   await s.req("GET", "/api/orders/1?phone=05320000009");
   assert.equal((await s.req("GET", "/api/orders/1?phone=05320000009")).status, 429);
@@ -174,15 +177,17 @@ test("yasal sayfalar ayarlardan üretilir; boş alanlar […] kalır", async () 
   assert.match(r.headers.get("content-type"), /text\/html/);
   assert.match(r.text, /<body class="page page-legal">/);
   assert.match(r.text, /<h1 class="page-title">KVKK Aydınlatma Metni<\/h1>/);
-  assert.match(r.text, /Unvan: \[…\]/);
+  // YASAL.md §5.3 metni: "{{unvan}} ({{isletmeAdi}})"
+  assert.match(r.text, /\[…\] \(Ulusoy Market\)/);
   assert.match(r.text, /<link rel="stylesheet" href="\/style.css">/);
   s.app.db.settings.legal.companyTitle = "Ulusoy Gıda <Ltd>";
   r = await s.req("GET", "/kvkk");
-  assert.match(r.text, /Unvan: Ulusoy Gıda &lt;Ltd&gt;/, "HTML kaçışlı");
-  s.app.db.settings.legal.texts.iade = "## Özel başlık\nSatır bir\n\n- madde";
+  assert.match(r.text, /Ulusoy Gıda &lt;Ltd&gt; \(Ulusoy Market\)/, "HTML kaçışlı");
+  // 2. revizyon: metinlerin kaynağı settings.legal.docs[] (texts eski alan, belgelerden üretilir)
+  s.app.db.settings.legal.docs.find((d) => d.key === "iade").text ="## Özel başlık\nSatır bir\n\n- madde";
   r = await s.req("GET", "/iade-kosullari");
   assert.match(r.text, /<h2>Özel başlık<\/h2>\n<p>Satır bir<\/p>\n<ul><li>madde<\/li><\/ul>/);
-  for (const p of ["/mesafeli-satis", "/cerez-politikasi", "/hakkimizda", "/teslimat"]) {
+  for (const p of ["/mesafeli-satis", "/on-bilgilendirme", "/cerez-politikasi", "/hakkimizda", "/teslimat"]) {
     assert.equal((await s.req("GET", p)).status, 200, p);
   }
 });
@@ -233,6 +238,6 @@ test("manifest", async () => {
   assert.equal(r.json.name, "Ulusoy Market");
   assert.equal(r.json.lang, "tr");
   assert.equal(r.json.start_url, "/");
-  assert.equal(r.json.theme_color, "#F97330");
+  assert.equal(r.json.theme_color, "#0B0B0C"); // yeni palet (siyah + altın)
   assert.ok(r.json.icons.length >= 1);
 });

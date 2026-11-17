@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "anahtar-degistir": "node scripts/anahtar-degistir.js",
     "reset": "node -e \"const fs=require('fs');if(fs.existsSync('data/db.json')){fs.mkdirSync('data/backups',{recursive:true});const n='data/backups/sifirlama-oncesi-'+Date.now()+'.json';fs.renameSync('data/db.json',n);console.log('Eski veri tasindi: '+n)}\""
   }
 }

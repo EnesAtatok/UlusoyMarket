@@ -4,15 +4,17 @@ import {
   S, on, emit, setStore, setQty, toggleFav, setDelivery, setCoupon, saveProfile, requestQuote, cartCount, status,
   storeInfo, zones,
 } from "./js/state.js";
-import { homeView, heroHtml, catalogView, openProduct, refreshQty, syncClock, resetSearchIndex } from "./js/shop.js";
+import { homeView, heroHtml, catalogView, openProduct, refreshQty, resetSearchIndex, failedImgs } from "./js/shop.js";
+import { syncClock, serverNow, fitGauge, gaugeHtml } from "./js/hours.js";
 import {
-  cartView, refreshCartView, renderAside, renderCartBar, checkoutView, refreshCheckout, initCheckout, submitOrder,
-  cleanField, clearFieldError, deleteAddress,
+  cartView, refreshCartView, renderAside, renderCartBar, checkoutView, refreshCheckout, refreshReview, initCheckout, submitOrder,
+  cleanField, clearFieldError, deleteAddress, syncConsents, openDocPreview, setRemember, forgetMe,
 } from "./js/cart.js";
 import {
-  fetchMyOrders, activeOrders, renderStrip, dismissStrip, trackHtml, loadOrder, myOrdersView, lookupOrder, lookupHtml,
-  openCancelDialog, confirmCancel, reorder, isActive,
+  fetchMyOrders, activeOrders, renderStrip, dismissStrip, trackHtml, loadOrder, myOrdersView, myOrdersRegion, lookupOrder,
+  lookupHtml, phoneLookupOn, openCancelDialog, confirmCancel, reorder, takeTrackParam, shareLink, downloadDocs, sendReturn,
 } from "./js/orders.js";
+import { startLive, refreshLive } from "./js/live.js";
 
 const main = $("#main");
 const desktop = window.matchMedia("(min-width: 1080px)");
@@ -37,7 +39,7 @@ function parseRoute() {
     case "sepet": return { name: "cart" };
     case "odeme": return { name: "checkout" };
     case "siparislerim": return { name: "orders" };
-    case "siparis": return { name: "track", id: Number(parts[1]) || 0, fresh: qp.get("yeni") === "1" };
+    case "siparis": return { name: "track", id: Number(parts[1]) || 0, fresh: qp.get("yeni") === "1", ret: qp.get("iade") === "1" };
     default: return { name: "notfound" };
   }
 }
@@ -52,12 +54,10 @@ export function navigate(hash, { replace = false } = {}) {
 const TITLES = { home: "", catalog: "Ürünler", cart: "Sepet", checkout: "Siparişi tamamla", orders: "Siparişlerim", track: "Sipariş takibi", notfound: "Sayfa bulunamadı" };
 const NAV_OF = { home: "home", catalog: "kategoriler", cart: "sepet", checkout: "sepet", orders: "siparislerim", track: "siparislerim" };
 
-let trackTimer = null;
 function render({ keepScroll = false } = {}) {
   if (!S.store) return;
   const prev = route;
   route = parseRoute();
-  clearInterval(trackTimer);
   const sameView = prev.name === route.name && prev.name === "catalog";
   const searchFocused = document.activeElement === $("#q");
 
@@ -87,6 +87,7 @@ function render({ keepScroll = false } = {}) {
   main.innerHTML = html;
   main.dataset.view = route.name;
   document.body.dataset.view = route.name;
+  lastTrack = "";
 
   const cat = route.cat && S.catById.get(route.cat);
   const t = cat ? cat.name : TITLES[route.name];
@@ -98,10 +99,12 @@ function render({ keepScroll = false } = {}) {
   }
 
   updateChrome();
+  if (route.name === "home") fitGauge(main);
   if (route.name === "checkout") initCheckout();
   if (route.name === "cart" || route.name === "checkout") requestQuote.flush();
   if (route.name === "track") showTrack(route);
   if (route.name === "orders" && S.myOrders.length) fetchMyOrders().catch(() => {});
+  refreshLive();
 
   if (route.anchor) {
     const target = document.getElementById(route.anchor) || (/indirim/.test(route.anchor) ? document.getElementById("indirimler") : null);
@@ -140,54 +143,66 @@ function notFound() {
 }
 
 // ---------- Sipariş takibi ----------
+// Takip ekranı kendi zamanlayıcısını kurmaz: canlı akış ve yoklama js/live.js'te tek yerde çalışır,
+// ekran "orders" olayıyla yeniden çizilir (yenileme gerekmez, zamanlayıcı sızmaz).
 function trackPlaceholder() {
   return `<div class="page-pad narrow"><div class="sk sk-hero"></div><div class="sk sk-card"></div></div>`;
+}
+let lastTrack = "";
+function trackSig(o) {
+  return `${o.id}:${o.status}:${o.updatedAt}:${o.canCancel}:${o.cancelNote || ""}:${route.fresh}`;
 }
 async function showTrack(r) {
   const known = S.myOrders.some((o) => o.id === r.id);
   if (!known) {
     main.innerHTML = `<div class="page-pad narrow"><a class="back-link" href="#/siparislerim">${icon("left")}Siparişlerim</a>
       <h1 class="page-h1">Sipariş #${r.id || ""}</h1>
-      <p class="muted">Bu sipariş bu cihazda kayıtlı değil. Telefon numaranızla sorgulayın.</p>${lookupHtml(r.id ? String(r.id) : "")}</div>`;
+      <p class="muted">Bu sipariş bu cihazda kayıtlı değil. Siparişi verdiğiniz cihazdan ya da sipariş onayında verilen gizli takip bağlantısıyla açın.</p>${lookupHtml(r.id ? String(r.id) : "")}</div>`;
     return;
   }
   const cached = S.orderData.find((o) => o.id === r.id);
-  if (cached) paintTrack(cached, r);
+  if (cached) paintTrack(cached);
   try {
     const o = await loadOrder(r.id);
-    if (route.name === "track" && route.id === r.id) paintTrack(o, r);
-  } catch (e) {
     if (route.name !== "track" || route.id !== r.id) return;
-    if (!cached) main.innerHTML = errorView(e.message, "track-retry");
-    return;
+    if (o) paintTrack(o);
+    else main.innerHTML = `<div class="page-pad narrow"><div class="empty"><p class="empty-title">Sipariş #${r.id} bulunamadı.</p><p>Sipariş silinmiş ya da bağlantı geçersiz olabilir.</p><p class="empty-actions"><a class="btn btn-primary" href="#/siparislerim">Siparişlerim</a></p></div></div>`;
+  } catch (e) {
+    if (route.name !== "track" || route.id !== r.id || cached) return;
+    // İlk istek başarısız: hata göster; yoklama/canlı akış sürer, veri gelince ekran kendiliğinden dolar
+    main.innerHTML = errorView(e.message, "track-retry", "Sipariş bilgisi alınamadı.");
   }
-  trackTimer = setInterval(async () => {
-    if (document.hidden || route.name !== "track" || route.id !== r.id) return;
-    try {
-      const o = await loadOrder(r.id);
-      if (route.name === "track" && route.id === r.id && !$("#confirmDialog").open) paintTrack(o, r);
-      if (!isActive(o)) clearInterval(trackTimer);
-    } catch {}
-  }, 15000);
 }
-let lastTrackSig = "";
-function paintTrack(o, r) {
-  const sig = `${o.id}:${o.status}:${o.updatedAt}:${r.fresh}`;
+function paintTrack(o, { animate = false } = {}) {
+  const sig = trackSig(o);
   const el = main.querySelector(`[data-order="${o.id}"]`);
-  if (el && sig === lastTrackSig) return;
-  lastTrackSig = sig;
-  const hadFocus = el && el.contains(document.activeElement) ? document.activeElement.dataset.action : null;
-  main.innerHTML = trackHtml(o, { fresh: r.fresh });
-  if (hadFocus) main.querySelector(`[data-action="${hadFocus}"]`)?.focus();
+  if (el && sig === lastTrack) return;
+  lastTrack = sig;
+  // Açık form/pencere varken yazılanı kaybettirme: iade formu doluysa yalnızca üst kartı tazele
+  const retForm = el?.querySelector(".return-form");
+  const typed = retForm?.message?.value;
+  const doneHtml = retForm?.querySelector(".ret-done")?.innerHTML;
+  const openRet = el?.querySelector(".return-box")?.open || route.ret;
+  const hadFocus = el && el.contains(document.activeElement) ? document.activeElement.dataset.action || document.activeElement.id : null;
+  main.innerHTML = trackHtml(o, { fresh: route.fresh, animate });
+  const box = main.querySelector(".return-box");
+  if (box && openRet) {
+    box.open = true;
+    if (typed) box.querySelector("textarea").value = typed;
+    if (doneHtml) box.querySelector(".ret-done").innerHTML = doneHtml;
+    if (route.ret && !el) box.scrollIntoView({ block: "start" });
+  }
+  if (hadFocus) (main.querySelector(`[data-action="${hadFocus}"]`) || document.getElementById(hadFocus))?.focus();
 }
 
-function errorView(msg, action = "retry-load") {
+function errorView(msg, action = "retry-load", title = "Mağaza yüklenemedi.") {
+  const i = storeInfo();
   return `<div class="page-pad narrow"><div class="empty empty-error" role="alert">
     <span class="empty-art" aria-hidden="true">${icon("offline")}</span>
-    <p class="empty-title">Mağaza yüklenemedi.</p>
+    <p class="empty-title">${esc(title)}</p>
     <p>${esc(msg)}</p>
     <p class="empty-actions"><button class="btn btn-primary" type="button" data-action="${action}">${icon("refresh")}Yeniden dene</button>
-    <a class="btn btn-ghost" href="tel:05373119696">${icon("phone")}Telefonla sipariş</a></p>
+    <a class="btn btn-ghost" href="${esc(telHref(i.phone || "05373119696"))}">${icon("phone")}Telefonla sipariş</a></p>
   </div></div>`;
 }
 
@@ -199,7 +214,10 @@ function renderHeader() {
   pill.querySelector(".status-text").textContent = st.label || "";
   pill.title = st.message || "";
   const i = storeInfo();
-  if (i.phone) $("#topCall").href = telHref(i.phone);
+  if (i.phone) {
+    $("#topCall").href = telHref(i.phone);
+    $("#topCall").setAttribute("aria-label", `Marketi ara: ${i.phone}`);
+  }
   if (i.whatsapp) $("#topWa").href = waHref(i.whatsapp);
   const a = S.store.announcement;
   const ann = $("#announce");
@@ -212,25 +230,31 @@ function renderHeader() {
 function renderFooter() {
   const i = storeInfo();
   const year = new Date().getFullYear();
-  const hours = (S.store.hours?.summary || []).map((h) => `<li>${esc(h.days)}: ${esc(h.text)}</li>`).join("");
+  const week = S.store.status?.week || [];
+  const hours = week.length
+    ? week.map((d) => `<li${d.isToday ? ' class="is-today"' : ""}><span>${esc(d.dayName)}</span><span>${d.closed ? "Kapalı" : d.allDay ? "24 saat" : `${esc(d.open)}–${esc(d.close)}`}</span></li>`).join("")
+    : (S.store.hours?.summary || []).map((h) => `<li><span>${esc(h.days)}</span><span>${esc(h.text)}</span></li>`).join("");
+  const docs = (S.store.legal?.docs || []).filter((d) => ["kvkk", "mesafeliSatis", "onBilgilendirme", "iade", "teslimatKosullari", "kullanim", "cerez", "islemRehberi", "iletisim"].includes(d.key));
+  const lg = S.store.legal || {};
+  const seller = [lg.companyTitle, lg.taxOffice && lg.taxNo ? `${lg.taxOffice} V.D. ${lg.taxNo}` : "", lg.mersis ? `MERSİS ${lg.mersis}` : ""].filter(Boolean).join(" · ");
   $("#footer").innerHTML = `<div class="footer-inner">
     <div class="footer-brand">
-      <img src="/img/logo.webp" alt="" width="44" height="47" loading="lazy">
+      <img src="/img/logo-240.webp" alt="" width="72" height="72" loading="lazy" decoding="async">
       <p><strong>${esc(i.name)}</strong><span>${esc(i.slogan || "")}</span></p>
     </div>
     <div class="footer-col footer-contact">
       <h2>İletişim</h2>
       <ul>
-        ${i.address ? `<li>${esc(i.address)}</li>` : ""}
-        ${i.phone ? `<li><a href="${esc(telHref(i.phone))}">${esc(i.phone)}</a></li>` : ""}
-        ${i.whatsapp ? `<li><a href="${esc(waHref(i.whatsapp))}" target="_blank" rel="noopener">WhatsApp'tan yazın</a></li>` : ""}
+        ${i.address ? `<li class="footer-addr">${esc(i.address)}</li>` : ""}
+        ${i.phone ? `<li><a href="${esc(telHref(i.phone))}">${icon("phone")}${esc(i.phone)}</a></li>` : ""}
+        ${i.whatsapp ? `<li><a href="${esc(waHref(i.whatsapp))}" target="_blank" rel="noopener">${icon("wa")}WhatsApp'tan yazın</a></li>` : ""}
         ${i.instagram ? `<li><a href="${esc(i.instagram)}" target="_blank" rel="noopener">${icon("insta")}Instagram</a></li>` : ""}
-        ${i.mapsUrl ? `<li><a href="${esc(i.mapsUrl)}" target="_blank" rel="noopener">Haritada göster</a></li>` : ""}
+        ${i.mapsUrl ? `<li><a href="${esc(i.mapsUrl)}" target="_blank" rel="noopener">${icon("pin")}Haritada göster</a></li>` : ""}
       </ul>
     </div>
     <div class="footer-col">
       <h2>Sipariş saatleri</h2>
-      <ul>${hours}</ul>
+      <ul class="footer-hours">${hours}</ul>
     </div>
     <div class="footer-col">
       <h2>Teslimat bölgeleri</h2>
@@ -240,13 +264,10 @@ function renderFooter() {
       <h2>Kurumsal</h2>
       <ul>
         <li><a href="/hakkimizda">Hakkımızda</a></li>
-        <li><a href="/kvkk">KVKK aydınlatma metni</a></li>
-        <li><a href="/mesafeli-satis">Mesafeli satış sözleşmesi</a></li>
-        <li><a href="/iade-kosullari">İade koşulları</a></li>
-        <li><a href="/cerez-politikasi">Çerez politikası</a></li>
+        ${docs.map((d) => `<li><a href="${esc(d.path)}">${esc(d.title)}</a></li>`).join("")}
       </ul>
     </div>
-    <p class="footer-legal">© ${year} ${esc(S.store.legal?.companyTitle || i.name)}. Alkollü içki ve tütün ürünleri internetten satılmaz.</p>
+    <p class="footer-legal">© ${year} ${esc(lg.companyTitle || i.name)}${seller && seller !== lg.companyTitle ? `. ${esc(seller)}` : ""}. Alkollü içki ve tütün ürünleri internetten satılmaz.</p>
   </div>`;
 }
 
@@ -262,6 +283,7 @@ function updateBadges() {
     b.textContent = a;
   }
   for (const l of $$('[data-nav="sepet"]')) l.setAttribute("aria-label", n ? `Sepet, ${n} ürün` : "Sepet, boş");
+  for (const l of $$('[data-nav="siparislerim"]')) l.setAttribute("aria-label", a ? `Siparişlerim, ${a} süren sipariş` : "Siparişlerim");
 }
 
 // ---------- Tema ----------
@@ -291,6 +313,7 @@ function cycleTheme() {
 }
 
 // ---------- Veri yükleme ----------
+let hoursSig = "";
 async function loadStore({ silent = false } = {}) {
   const data = await api("/api/store");
   syncClock(data.serverTime);
@@ -299,19 +322,44 @@ async function loadStore({ silent = false } = {}) {
   resetSearchIndex();
   loadFailed = false;
   renderHeader();
-  if (firstLoad) {
-    renderFooter();
-    applyZoneParam();
-  }
+  const sig = JSON.stringify([data.status?.week, data.store, data.zones?.map((z) => z.slug), data.legal?.docs?.map((d) => d.path)]);
+  if (firstLoad || sig !== hoursSig) renderFooter();
+  hoursSig = sig;
+  if (firstLoad) applyZoneParam();
   if (!silent || firstLoad) render({ keepScroll: !firstLoad });
   else {
-    // Sessiz yenilemede yalnızca durum alanlarını tazele
-    const hero = main.querySelector(".hero");
-    if (hero && route.name === "home") hero.outerHTML = heroHtml();
+    // Sessiz yenilemede yalnızca durum alanlarını tazele (saat göstergesi, sepet, form)
+    paintGauge();
     if (route.name === "cart") refreshCartView();
     if (route.name === "checkout") refreshCheckout();
     updateChrome();
     requestQuote();
+  }
+}
+
+/** Karşılamadaki saat göstergesini yeniden çizer (dakikada bir ve durum değişince) */
+function paintGauge() {
+  if (route.name !== "home") return;
+  const g = main.querySelector("[data-gauge]");
+  if (!g) return;
+  const wasOpen = g.querySelector(".gauge-week")?.open;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = gaugeHtml(status());
+  const fresh = tmp.firstElementChild;
+  if (wasOpen) fresh.querySelector(".gauge-week")?.setAttribute("open", "");
+  g.replaceWith(fresh);
+  fitGauge(main);
+  // Kapalı kutusu, düğmeler: durum değiştiyse karşılamanın tamamı
+  const hero = main.querySelector(".hero");
+  const want = status().acceptingOrders ? "acik" : "kapali";
+  if (hero && hero.dataset.accepting !== want) {
+    const t = document.createElement("div");
+    t.innerHTML = heroHtml();
+    const h = t.firstElementChild;
+    h.dataset.accepting = want;
+    if (wasOpen) h.querySelector(".gauge-week")?.setAttribute("open", "");
+    hero.replaceWith(h);
+    fitGauge(main);
   }
 }
 
@@ -325,19 +373,33 @@ function applyZoneParam() {
     setDelivery({ type: "teslimat", zoneId: z.id });
     toast(`Teslimat bölgesi: ${z.name}`);
   }
-  history.replaceState(null, "", location.pathname + location.hash);
+  p.delete("bolge");
+  history.replaceState(null, "", location.pathname + (p.toString() ? `?${p}` : "") + location.hash);
 }
 
 async function boot() {
   paintThemeBtn();
   updateNet();
+  const linked = takeTrackParam();
   if (S.myOrders.length) fetchMyOrders().catch(() => {});
   try {
     await loadStore();
+    if (linked) toast(`Sipariş #${linked} bu cihazın Siparişlerim listesine eklendi`);
   } catch (e) {
     loadFailed = true;
     main.innerHTML = errorView(e.message);
+    return;
   }
+  startLive({
+    isWatching: () => route.name === "track" || route.name === "orders",
+    // Panelde saat / sipariş alımı değişince akış "durum" olayı yollar → mağaza verisi sessizce yenilenir.
+    // (Bağlanınca gelen hello'daki durum bildiğimizden farklıysa da yenilenir.)
+    onStatusChange: (st, force) => {
+      if (!S.store) return;
+      const sig = (x) => JSON.stringify(x && [x.state, x.acceptingOrders, x.closesAt, x.opensAt, x.week]);
+      if (force || sig(st) !== sig(S.store.status)) loadStore({ silent: true }).catch(() => {});
+    },
+  });
 }
 
 // ---------- Ağ durumu ----------
@@ -349,7 +411,6 @@ window.addEventListener("online", () => {
   updateNet();
   if (loadFailed || !S.store) boot();
   else loadStore({ silent: true }).catch(() => {});
-  if (S.myOrders.length) fetchMyOrders().catch(() => {});
 });
 window.addEventListener("offline", updateNet);
 
@@ -380,18 +441,33 @@ on("quoteLoading", () => {
 on("favs", (id) => {
   for (const b of $$(`[data-action="fav"][data-id="${id}"]`)) b.setAttribute("aria-pressed", S.favs.has(id));
 });
-on("orders", () => {
+on("orders", (d = {}) => {
   updateBadges();
   renderStrip(route.name === "track" || route.name === "orders" || route.name === "checkout");
   if (route.name === "orders") {
     const region = main.querySelector('[data-region="orders"]');
-    if (region) {
+    if (region && !region.contains(document.activeElement)) region.innerHTML = myOrdersRegion();
+    else if (region) {
+      // Odak listedeyse yalnızca değişen satırları değiştir
       const tmp = document.createElement("div");
-      tmp.innerHTML = myOrdersView();
-      region.replaceWith(tmp.querySelector('[data-region="orders"]'));
+      tmp.innerHTML = myOrdersRegion();
+      for (const id of d.changed || []) {
+        const fresh = tmp.querySelector(`[data-order-row="${id}"]`);
+        const old = region.querySelector(`[data-order-row="${id}"]`);
+        if (fresh && old) old.replaceWith(fresh);
+      }
     }
   }
+  if (route.name === "track") {
+    const o = S.orderData.find((x) => x.id === route.id);
+    const dlgOpen = $("#confirmDialog").open;
+    if (o && !dlgOpen) {
+      const before = main.querySelector(".steps")?.dataset.step;
+      paintTrack(o, { animate: before !== undefined && (d.changed || []).includes(o.id) });
+    } else if (!o && (d.removed || []).includes(route.id)) render();
+  }
 });
+on("myOrders", () => refreshLive());
 
 // ---------- Kullanıcı olayları ----------
 document.addEventListener("click", (e) => {
@@ -460,6 +536,29 @@ document.addEventListener("click", (e) => {
     case "cancel-order":
       openCancelDialog(id);
       break;
+    case "share-link":
+      shareLink(id);
+      break;
+    case "docs-download":
+      downloadDocs(id);
+      break;
+    case "doc-preview":
+      if (e.ctrlKey || e.metaKey || e.shiftKey) return; // yeni sekme isteği
+      e.preventDefault();
+      openDocPreview(el.dataset.doc);
+      break;
+    case "forget-me":
+      forgetMe();
+      break;
+    case "jump": {
+      e.preventDefault();
+      const target = document.querySelector(el.getAttribute("href"));
+      if (target) {
+        target.scrollIntoView({ block: "start", behavior: "smooth" });
+        target.querySelector("input, select, textarea")?.focus({ preventScroll: true });
+      }
+      break;
+    }
     case "reorder": {
       const r = reorder(id);
       if (r.added) {
@@ -527,15 +626,23 @@ document.addEventListener("change", (e) => {
     }
     cleanField(ta);
     clearFieldError(ta);
+    refreshReview();
   } else if (el.name === "payment") {
     const box = $('[data-region="change"]');
     if (box) box.hidden = el.value !== "nakit";
     saveProfile({ payment: el.value });
+    refreshReview();
+    requestQuote();
   } else if (el.name === "substitution") saveProfile({ substitution: el.value });
+  else if (el.name === "consent") {
+    clearFieldError(el);
+    syncConsents();
+  } else if (el.id === "rememberMe") setRemember(el.checked);
   else if (el.id === "phone" && /^0\d{10}$/.test(el.value)) {
     saveProfile({ phone: el.value });
     if (S.coupon) requestQuote();
-  }
+  } else if (el.id === "name" && S.profile.remember) saveProfile({ name: el.value.trim() });
+  else if (el.id === "address") refreshReview();
 });
 
 document.addEventListener("input", (e) => {
@@ -557,7 +664,7 @@ document.addEventListener("submit", (e) => {
   }
   if (f.id === "orderForm") {
     e.preventDefault();
-    submitOrder(f, navigate, () => loadStore({ silent: true }).catch(() => {}));
+    submitOrder(f, navigate, () => loadStore({ silent: true }));
     return;
   }
   const kind = f.dataset.form;
@@ -571,17 +678,44 @@ document.addEventListener("submit", (e) => {
     setCoupon(code.toLocaleUpperCase("tr"));
   } else if (kind === "lookup") {
     e.preventDefault();
-    lookupOrder(f, navigate);
+    if (phoneLookupOn()) lookupOrder(f, navigate);
+  } else if (kind === "return") {
+    e.preventDefault();
+    sendReturn(f);
   } else if (kind === "cancel") {
     e.preventDefault();
     confirmCancel(f).then((o) => {
       if (o) {
         toast(`Sipariş #${o.id} iptal edildi`);
-        if (route.name === "track") paintTrack(o, route);
+        if (route.name === "track") paintTrack(S.orderData.find((x) => x.id === o.id) || o);
       }
     });
   }
 });
+
+// Ürün/kategori görseli yüklenemezse emoji yer tutucuya düş (CSP satır içi onerror'a izin vermez)
+document.addEventListener(
+  "error",
+  (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !("fallback" in img.dataset)) return;
+    failedImgs.add(img.getAttribute("src"));
+    const parent = img.parentElement;
+    parent?.classList.remove("has-img");
+    if (img.dataset.fallback) {
+      const span = document.createElement("span");
+      span.className = "emoji";
+      span.setAttribute("aria-hidden", "true");
+      span.textContent = img.dataset.fallback;
+      img.replaceWith(span);
+    } else {
+      // Afiş görseli: görselsiz afiş düzenine geç
+      parent?.closest(".banner")?.classList.remove("has-img");
+      parent?.remove();
+    }
+  },
+  true,
+);
 
 // ---------- Arama ----------
 const q = $("#q");
@@ -616,9 +750,11 @@ productDialog.addEventListener("close", () => {
     pendingNav = null;
   }
 });
-productDialog.addEventListener("click", (e) => {
-  if (e.target === productDialog) productDialog.close(); // arka plana dokununca kapan
-});
+for (const dlg of $$("dialog.sheet")) {
+  dlg.addEventListener("click", (e) => {
+    if (e.target === dlg) dlg.close(); // arka plana dokununca kapan
+  });
+}
 window.addEventListener("popstate", () => {
   if (productDialog.open) productDialog.close();
   if (pendingNav) {
@@ -628,9 +764,6 @@ window.addEventListener("popstate", () => {
   }
 });
 const confirmDialog = $("#confirmDialog");
-confirmDialog.addEventListener("click", (e) => {
-  if (e.target === confirmDialog) confirmDialog.close();
-});
 
 function confirmBox(title, text, okLabel) {
   return new Promise((resolve) => {
@@ -660,26 +793,28 @@ window.addEventListener("hashchange", () => {
   render();
 });
 desktop.addEventListener("change", () => updateChrome());
+new ResizeObserver(() => fitGauge(main)).observe(main);
 
-// ---------- Yoklama ----------
+// ---------- Yoklama (mağaza durumu ve saatler) ----------
+// Panelde saat/sipariş alımı değişince en geç bu sürede yansır; sekmeye dönünce hemen.
 setInterval(() => {
   if (document.hidden || !S.store) return;
   loadStore({ silent: true }).catch(() => {});
-}, 90000);
+}, 45000);
+// Saat göstergesi: "şimdi" işareti ve kalan süre yarım dakikada bir; vardiya sınırı geçilince durum yeniden çekilir
 setInterval(() => {
-  if (document.hidden || !S.myOrders.length || route.name === "track") return;
-  if (activeOrders().length || route.name === "orders") fetchMyOrders().catch(() => {});
-}, 20000);
-// Saat şeridindeki "şimdi" işareti dakikada bir ilerlesin
-setInterval(() => {
-  if (route.name !== "home" || document.hidden) return;
-  const hero = main.querySelector(".hero");
-  if (hero) hero.outerHTML = heroHtml();
-}, 60000);
+  if (document.hidden || !S.store) return;
+  const st = status();
+  const now = serverNow();
+  const end = Date.parse(st.today?.endIso || "");
+  const next = Date.parse(st.nextOpenIso || "");
+  const crossed = (st.isOpen && Number.isFinite(end) && now >= end) || (!st.isOpen && Number.isFinite(next) && now >= next);
+  if (crossed) loadStore({ silent: true }).catch(() => {});
+  else paintGauge();
+}, 30000);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden || !S.store) return;
   loadStore({ silent: true }).catch(() => {});
-  if (S.myOrders.length) fetchMyOrders().catch(() => {});
 });
 
 // Yapışkan reyon sekmeleri başlığın hemen altında dursun

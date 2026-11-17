@@ -121,7 +121,7 @@ function renderBody(r, prev, p) {
   const hasData = s.orders > 0;
   $("#rBody").innerHTML = `
     <div class="kpis">
-      <div class="kpi accent"><div class="k">Ciro</div><div class="v">${tl(s.revenue)}</div>${ps ? delta(s.revenue, ps.revenue).replace('class="d', 'style="color:#C9D2E3" class="d') : ""}</div>
+      <div class="kpi accent"><div class="k">Ciro</div><div class="v">${tl(s.revenue)}</div>${ps ? delta(s.revenue, ps.revenue).replace('class="d', 'style="color:#D6D2C9" class="d') : ""}</div>
       <div class="kpi"><div class="k">Sipariş</div><div class="v">${s.orders}</div>${ps ? delta(s.orders, ps.orders) : ""}</div>
       <div class="kpi"><div class="k">Ortalama sepet</div><div class="v">${tl(s.avgBasket)}</div>${ps ? delta(s.avgBasket, ps.avgBasket) : ""}</div>
       <div class="kpi"><div class="k">Satılan ürün</div><div class="v">${numTr(s.itemsSold)}</div></div>

@@ -3,7 +3,19 @@
 import {
   state, $, $$, esc, icon, api, tl, toast, toastErr, isAdmin, bulkResult, openModal, confirmDialog, openMenu,
   showBulk, hideBulk, fold, debounce, parseNum, numTr, loadCatalog, resizeImage, readTextFile, download, isSoldOut, nav,
+  CAYMA, caymaOf, fmtDateTime,
 } from "./core.js";
+
+const CAYMA_SHORT = { yok_cabuk_bozulan: "Cayma yok", acilirsa_yok_hijyen: "Açılırsa cayma yok", var: "Cayma var" };
+const OLD_PRICE_HELP = "İndirim öncesi fiyat, son 10 gün içinde uygulanan en düşük fiyat olmalıdır (Fiyat Etiketi Yönetmeliği m.11). Boş bırakıp fiyatı düşürürseniz sistem bunu kendisi hesaplar.";
+/** Kaydetme yanıtındaki fiyat uyarılarını (warnings) gösterir */
+function showPriceWarnings(p) {
+  if (p && Array.isArray(p.warnings) && p.warnings.length) {
+    toast("Fiyat uyarısı: indirim öncesi fiyatı kontrol edin.", "warn", { details: [...p.warnings, "İndirim öncesi fiyat son 10 günün en düşük fiyatıdır."], timeout: 14000 });
+    return true;
+  }
+  return false;
+}
 
 const ps = { view: "urunler", q: "", cat: "", filter: "all", sel: new Set(), catSel: new Set() };
 const FILTERS = [["all", "Tümü"], ["sale", "Satışta"], ["soldout", "Tükendi"], ["hidden", "Gizli"], ["featured", "Öne çıkan"], ["discount", "İndirimli"], ["lowstock", "Az stok"]];
@@ -91,10 +103,10 @@ function productRow(p) {
       <div class="lrow-title"><span class="nm">${esc(p.name)}</span>
         ${p.hidden ? `<span class="badge b-warn">${icon("eye-off")} Gizli</span>` : ""}
         ${out ? `<span class="badge b-danger">Tükendi${!p.soldOut && p.stock === 0 ? " (stok 0)" : ""}</span>` : ""}
-        ${p.featured ? `<span class="badge b-navy">${icon("star")} Öne çıkan</span>` : ""}
+        ${p.featured ? `<span class="badge b-gold">${icon("star")} Öne çıkan</span>` : ""}
         ${disc ? `<span class="badge b-ok">%${disc} indirim</span>` : ""}
       </div>
-      <div class="lrow-sub">${p.brand ? `<span>${esc(p.brand)}</span>` : ""}<span>${esc(p.unit)}</span>${p.stock !== null && p.stock !== undefined ? `<span class="${p.stock <= 5 ? "age-hot" : ""}">Stok: ${p.stock}</span>` : ""}${p.maxPerOrder ? `<span>En fazla ${p.maxPerOrder}/sipariş</span>` : ""}${p.barcode ? `<span class="hide-phone">${esc(p.barcode)}</span>` : ""}</div>
+      <div class="lrow-sub">${p.brand ? `<span>${esc(p.brand)}</span>` : ""}<span>${esc(p.unit)}</span><span class="hide-phone" title="Cayma hakkı: ${esc(CAYMA[caymaOf(p)])}${p.caymaDurumu ? "" : " (kategoriden)"}">${CAYMA_SHORT[caymaOf(p)]}</span>${p.stock !== null && p.stock !== undefined ? `<span class="${p.stock <= 5 ? "age-hot" : ""}">Stok: ${p.stock}</span>` : ""}${p.maxPerOrder ? `<span>En fazla ${p.maxPerOrder}/sipariş</span>` : ""}${p.barcode ? `<span class="hide-phone">${esc(p.barcode)}</span>` : ""}</div>
     </div>
     <div class="price-cell">
       ${isAdmin() ? `<input class="input input-sm price-in" data-price="${p.id}" value="${esc(numTr(p.price))}" inputmode="decimal" aria-label="${esc(p.name)} fiyatı" title="Fiyatı değiştirip Enter'a basın">` : `<b>${tl(p.price)}</b>`}
@@ -121,7 +133,7 @@ function renderGroups() {
       <div class="cat-head">
         <label class="cb-cell"><input type="checkbox" class="cb" data-gsel="${c.id}" ${allSel ? "checked" : ""} ${items.length ? "" : "disabled"} aria-label="${esc(c.name)} kategorisindeki ürünleri seç"></label>
         ${isAdmin() ? `<button type="button" class="handle" data-handle="cat" aria-label="Kategoriyi sürükleyerek sırala" title="Kategoriyi sürükleyerek sırala">${icon("grip")}</button>` : ""}
-        <h3><span class="emo" aria-hidden="true">${esc(c.emoji)}</span>${esc(c.name)}</h3>
+        <h3><span class="emo" aria-hidden="true">${esc(c.emoji)}</span><span class="cat-name" title="${esc(c.name)}">${esc(c.name)}</span></h3>
         ${c.hidden ? `<span class="badge b-warn">${icon("eye-off")} Gizli kategori</span>` : ""}
         <span class="muted small">${f ? `${items.length} / ` : ""}${all.length} ürün</span>
         <span class="grow"></span>
@@ -174,6 +186,7 @@ async function onGroupsClick(e) {
       const p = state.products.find((x) => x.id === Number(d.pmore));
       const items = [{ label: "Stok güncelle", icon: "box", onClick: () => stockDialog(p) }];
       if (isAdmin()) items.unshift({ label: "Düzenle", icon: "edit", onClick: () => productDialog(p) });
+      items.push({ label: "Fiyat geçmişi", icon: "history", onClick: () => priceHistoryDialog(p) });
       if (isAdmin()) items.push({ label: "Çoğalt", icon: "copy", onClick: () => duplicate(p) }, { label: p.featured ? "Öne çıkarmayı kaldır" : "Öne çıkar", icon: "star", onClick: () => patchProduct(p.id, { featured: !p.featured }).then(() => { refreshRow(p.id); toast(p.featured ? "Öne çıkarılanlardan kaldırıldı." : "Öne çıkarıldı."); }).catch(toastErr) }, "-", { label: "Sil", icon: "trash", danger: true, onClick: () => deleteProducts([p.id]) });
       openMenu(t, items);
     } else if (d.editcat) {
@@ -224,9 +237,12 @@ async function onPriceBlur(e) {
   const old = p.price;
   inp.disabled = true;
   try {
+    const prevOld = p.oldPrice;
     const u = await patchProduct(p.id, { price: n });
     refreshRow(p.id);
-    toast(`"${u.name}" fiyatı ${tl(old)} → ${tl(u.price)}${old < u.price && p.oldPrice && !u.oldPrice ? " (indirim kaldırıldı)" : ""}.`, "ok", { action: { label: "Geri al", onClick: () => patchProduct(p.id, { price: old, ...(p.oldPrice ? { oldPrice: p.oldPrice } : {}) }).then(() => refreshRow(p.id)).catch(toastErr) } });
+    const note = old < u.price && prevOld && !u.oldPrice ? " (indirim kaldırıldı)"
+      : u.oldPrice && u.oldPrice !== prevOld ? ` — indirim öncesi fiyat ${tl(u.oldPrice)} (son 10 günün en düşüğü) olarak gösterilecek` : "";
+    if (!showPriceWarnings(u)) toast(`"${u.name}" fiyatı ${tl(old)} → ${tl(u.price)}${note}.`, "ok", { timeout: note ? 7000 : undefined, action: { label: "Geri al", onClick: () => patchProduct(p.id, { price: old, oldPrice: prevOld || null }).then(() => refreshRow(p.id)).catch(toastErr) } });
   } catch (err) { toastErr(err); inp.value = numTr(p.price); inp.disabled = false; }
 }
 
@@ -254,7 +270,17 @@ function renderBulk() {
     actions, onAction: bulkAction,
   });
 }
-const BULK_VERB = { soldOut: "ürün tükendi yapıldı", available: "ürün satışa açıldı", hide: "ürün gizlendi", show: "ürün gösteriliyor", feature: "ürün öne çıkarıldı", unfeature: "ürün öne çıkanlardan kaldırıldı", move: "ürün taşındı", price: "ürünün fiyatı güncellendi", delete: "ürün silindi" };
+const caymaOptions = (sel, catLabel = "Kategoriden") => `<option value="" ${!sel ? "selected" : ""}>${esc(catLabel)}</option>${Object.entries(CAYMA).map(([k, l]) => `<option value="${k}" ${sel === k ? "selected" : ""}>${esc(l)}</option>`).join("")}`;
+const CAYMA_HELP = "Mesafeli Sözleşmeler Yönetmeliği m.15: çabuk bozulan ya da son kullanma tarihi geçebilecek ürünlerde (meyve-sebze, süt, ekmek, şarküteri…) cayma hakkı yoktur; ambalajı açılınca sağlık/hijyen açısından iadesi uygun olmayan ürünlerde (kişisel bakım, bebek bezi…) ambalaj açılırsa cayma hakkı yoktur. Bu bilgi sipariş özetinde ve sözleşmede ürün ürün gösterilir.";
+function bulkCayma(ids) {
+  openModal({
+    title: `${ids.length} ürünün cayma durumu`, size: "narrow", submitLabel: "Uygula",
+    body: `<label class="field"><span>Cayma hakkı</span><select name="cayma">${caymaOptions(null, "Kategoriden al (ürüne özel değer kalkar)")}</select></label>
+      <p class="hint" style="margin:0">${esc(CAYMA_HELP)}</p>`,
+    onSubmit: async (f) => { await runBulk("cayma", { caymaDurumu: f.cayma.value || null }); },
+  });
+}
+const BULK_VERB = { cayma: "ürünün cayma durumu güncellendi", soldOut: "ürün tükendi yapıldı", available: "ürün satışa açıldı", hide: "ürün gizlendi", show: "ürün gösteriliyor", feature: "ürün öne çıkarıldı", unfeature: "ürün öne çıkanlardan kaldırıldı", move: "ürün taşındı", price: "ürünün fiyatı güncellendi", delete: "ürün silindi" };
 async function runBulk(action, extra = {}) {
   const ids = [...ps.sel];
   const r = await api("/api/admin/products/bulk", { method: "POST", body: { ids, action, ...extra } });
@@ -272,6 +298,7 @@ async function bulkAction(id, btn) {
       return openMenu(btn, [
         { label: "Öne çıkar", icon: "star", onClick: () => runBulk("feature").catch(toastErr) },
         { label: "Öne çıkarmayı kaldır", icon: "star", onClick: () => runBulk("unfeature").catch(toastErr) },
+        { label: "Cayma durumu…", icon: "scale", onClick: () => bulkCayma(ids) },
         "-",
         { label: "Seçimi kaldır", icon: "x", onClick: () => { ps.sel.clear(); renderGroups(); } },
       ]);
@@ -350,6 +377,31 @@ function stockDialog(p) {
   });
 }
 
+// ---------- Fiyat geçmişi (son 45 gün) ----------
+function priceHistoryDialog(p) {
+  const hist = (p.priceHistory || []).slice().sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  // Referans: şu anki fiyattan önceki 10 günde uygulanan en düşük fiyat (Meyve & Sebze'de bir önceki fiyat)
+  const cur = hist[0];
+  const since = cur ? Date.parse(cur.at) - 10 * 86400000 : 0;
+  const window10 = hist.slice(1).filter((h, i) => Date.parse(hist[i].at) > since);
+  const produce = /meyve|sebze/.test(fold((state.categories.find((c) => c.id === p.categoryId) || {}).name));
+  const ref = produce ? hist.slice(1, 2) : window10;
+  const low = ref.length ? Math.min(...ref.map((h) => h.price)) : null;
+  const warn = p.oldPrice && low !== null && p.oldPrice > low + 0.001;
+  openModal({
+    title: `Fiyat geçmişi · ${p.name}`, size: "narrow", hideSubmit: true, cancelLabel: "Kapat", guard: false,
+    body: `<div class="kpis" style="margin:0;grid-template-columns:repeat(2,minmax(0,1fr))">
+        <div class="kpi"><div class="k">Şu anki fiyat</div><div class="v">${tl(p.price)}</div></div>
+        <div class="kpi"><div class="k">${produce ? "Bir önceki fiyat" : "Önceki 10 günün en düşüğü"}</div><div class="v">${low === null ? "—" : tl(low)}</div></div>
+      </div>
+      ${p.oldPrice ? `<div class="callout ${warn ? "warn" : "ok"}">${icon(warn ? "alert" : "check")}<div>İndirim öncesi fiyat olarak <b>${tl(p.oldPrice)}</b> gösteriliyor.${warn ? ` Bu, ${produce ? "bir önceki fiyattan" : "son 10 günde uygulanan en düşük fiyattan"} (${tl(low)}) yüksek; yönetmeliğe göre ${tl(low)} gösterilmeli.` : ""}</div></div>` : ""}
+      ${produce ? `<p class="hint" style="margin:0">Meyve ve sebzede indirim öncesi fiyat olarak bir önceki fiyat kullanılabilir.</p>` : ""}
+      <p class="hint" style="margin:0">${esc(OLD_PRICE_HELP)} Kayıtlar 45 gün tutulur; yalnızca panelde görünür.</p>
+      ${hist.length ? `<div class="table-wrap"><table class="tbl ph-table"><thead><tr><th>Tarih</th><th class="r">Fiyat</th></tr></thead><tbody>${hist.map((h) => `<tr class="${low !== null && Math.abs(h.price - low) < 0.001 && ref.includes(h) ? "low" : ""}"><td>${fmtDateTime(h.at)}${h.assumed ? ` <span class="badge b-muted" title="Geçmişi olmayan üründe değişiklikten önceki fiyatın tarihi bilinmediği için 10 gün önceye konmuş kayıt">tahmini tarih</span>` : ""}</td><td class="r num">${tl(h.price)}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty small">Henüz fiyat değişikliği kaydı yok.</div>`}`,
+  });
+}
+
 // ---------- Ürün formu ----------
 function productDialog(p, presetCat) {
   if (!state.categories.length) { toast("Önce bir kategori ekleyin.", "warn"); return; }
@@ -375,10 +427,12 @@ function productDialog(p, presetCat) {
       </div>
       <div class="grid-4 keep-2">
         <label class="field"><span>Satış fiyatı</span><div class="affix"><input name="price" inputmode="decimal" value="${esc(numTr(v("price", "")))}" required><span class="sfx">₺</span></div></label>
-        <label class="field"><span>Eski fiyat <span class="hint">(indirim)</span></span><div class="affix"><input name="oldPrice" inputmode="decimal" value="${esc(numTr(v("oldPrice", "")))}"><span class="sfx">₺</span></div><span class="discount-hint" id="fDisc"></span></label>
+        <label class="field"><span>İndirim öncesi fiyat</span><div class="affix"><input name="oldPrice" inputmode="decimal" value="${esc(numTr(v("oldPrice", "")))}" aria-describedby="fOldHelp"><span class="sfx">₺</span></div><span class="discount-hint" id="fDisc"></span></label>
         <label class="field"><span>Birim</span><input name="unit" list="unitList" maxlength="20" value="${esc(v("unit", "adet"))}"><datalist id="unitList">${UNITS.map((u) => `<option value="${u}">`).join("")}</datalist></label>
         <label class="field"><span>Simge (emoji)</span><input name="emoji" maxlength="8" value="${esc(v("emoji", "🛒"))}"></label>
       </div>
+      <p class="hint" id="fOldHelp" style="margin:-4px 0 0">${esc(OLD_PRICE_HELP)}${p ? ` <button type="button" class="btn btn-sm btn-ghost" id="fHist">${icon("history", "i-sm")} Fiyat geçmişi</button>` : ""}</p>
+      <label class="field"><span>Cayma hakkı</span><select name="caymaDurumu">${caymaOptions(p ? p.caymaDurumu : null, `Kategoriden (${CAYMA[caymaOf(p || { categoryId: cat })]})`)}</select><span class="hint">${esc(CAYMA_HELP)}</span></label>
       <div class="grid-3">
         <label class="field"><span>Barkod</span><input name="barcode" maxlength="40" inputmode="numeric" value="${esc(v("barcode"))}"></label>
         <label class="field"><span>Stok <span class="hint">(boş = takip yok)</span></span><input name="stock" inputmode="numeric" value="${esc(v("stock", ""))}"></label>
@@ -396,6 +450,13 @@ function productDialog(p, presetCat) {
         $("#fDisc").textContent = pr > 0 && op > pr ? `%${Math.round((1 - pr / op) * 100)} indirim gösterilir` : op && pr && op <= pr ? "Eski fiyat satış fiyatından yüksek olmalı" : "";
       };
       f.price.addEventListener("input", disc); f.oldPrice.addEventListener("input", disc); disc();
+      const hist = $("#fHist");
+      if (hist) hist.addEventListener("click", () => priceHistoryDialog(p));
+      // Kategori değişince "Kategoriden (…)" seçeneğinin açıklaması güncellenir
+      f.categoryId.addEventListener("change", () => {
+        const o = f.caymaDurumu.querySelector('option[value=""]');
+        if (o) o.textContent = `Kategoriden (${CAYMA[caymaOf({ categoryId: Number(f.categoryId.value) })]})`;
+      });
       $("#fImg").addEventListener("change", async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -415,19 +476,25 @@ function productDialog(p, presetCat) {
       if (Number.isNaN(oldPrice)) throw new Error("Eski fiyat geçersiz.");
       const intOrNull = (s, label) => { const t = s.trim(); if (!t) return null; const n = Number(t); if (!Number.isInteger(n) || n < 0) throw new Error(`${label} tam sayı olmalı.`); return n; };
       const body = {
-        name: f.name.value.trim(), brand: f.brand.value.trim(), categoryId: Number(f.categoryId.value), price, oldPrice: oldPrice || null,
+        name: f.name.value.trim(), brand: f.brand.value.trim(), categoryId: Number(f.categoryId.value), price,
         unit: f.unit.value.trim() || "adet", emoji: f.emoji.value.trim(), barcode: f.barcode.value.trim(),
         stock: intOrNull(f.stock.value, "Stok"), maxPerOrder: intOrNull(f.maxPerOrder.value, "Sipariş başına en fazla"),
         description: f.description.value.trim(), featured: f.featured.checked, soldOut: f.soldOut.checked, hidden: f.hidden.checked,
+        caymaDurumu: f.caymaDurumu.value || null,
       };
+      // İndirim öncesi fiyat yalnızca elle değiştirildiyse gönderilir; gönderilmezse fiyat düşüşünde sunucu
+      // son 10 günün en düşük fiyatını kendisi yazar (Fiyat Etiketi Yönetmeliği m.11)
+      const prevOld = p ? p.oldPrice || null : null;
+      if ((oldPrice || null) !== prevOld) body.oldPrice = oldPrice || null;
       if (img !== undefined) body.image = img;
+      let saved;
       if (p) {
-        await patchProduct(p.id, body);
-        toast("Ürün güncellendi.");
+        saved = await patchProduct(p.id, body);
+        if (!showPriceWarnings(saved)) toast(saved.oldPrice && saved.oldPrice !== prevOld && body.oldPrice === undefined ? `Ürün güncellendi. İndirim öncesi fiyat ${tl(saved.oldPrice)} (son 10 günün en düşüğü) olarak gösterilecek.` : "Ürün güncellendi.");
       } else {
-        const c = await api("/api/admin/products", { method: "POST", body });
-        state.products.push(c);
-        toast(`"${c.name}" eklendi.`);
+        saved = await api("/api/admin/products", { method: "POST", body });
+        state.products.push(saved);
+        if (!showPriceWarnings(saved)) toast(`"${saved.name}" eklendi.`);
       }
       ps.lastCat = body.categoryId;
       await loadCatalog(true);
@@ -470,7 +537,8 @@ function importCsv() {
       const r = await api("/api/admin/products/import", { method: "POST", body: { csv: text, dryRun: false } });
       await loadCatalog(true);
       if (ps.view === "urunler") renderGroups();
-      toast(`İçe aktarma tamam: ${r.added} eklendi, ${r.updated} güncellendi${r.errors.length ? `, ${r.errors.length} satır atlandı` : ""}.`, r.errors.length ? "warn" : "ok", { details: r.errors.slice(0, 6).map((e) => `Satır ${e.row}: ${e.message}`) });
+      const warns = r.warnings || [];
+      toast(`İçe aktarma tamam: ${r.added} eklendi, ${r.updated} güncellendi${r.errors.length ? `, ${r.errors.length} satır atlandı` : ""}${warns.length ? `, ${warns.length} eski fiyat uyarısı` : ""}.`, r.errors.length || warns.length ? "warn" : "ok", { details: [...r.errors.slice(0, 6).map((e) => `Satır ${e.row}: ${e.message}`), ...warns.slice(0, 4).map((w) => `Satır ${w.row}: ${w.message}`)] });
     },
   });
 }
@@ -482,7 +550,8 @@ function reportHtml(r) {
     <div class="kpi"><div class="k">Hatalı satır</div><div class="v" style="color:${r.errors.length ? "var(--danger)" : "inherit"}">${r.errors.length}</div></div>
   </div>
   ${r.createdCategories && r.createdCategories.length ? `<p class="small">Yeni kategori: <b>${r.createdCategories.map(esc).join(", ")}</b></p>` : ""}
-  ${r.errors.length ? `<div class="callout danger">${icon("alert")}<div>${r.errors.slice(0, 20).map((e) => `Satır ${e.row}: ${esc(e.message)}`).join("<br>")}${r.errors.length > 20 ? `<br>… ${r.errors.length - 20} hata daha` : ""}</div></div>` : ""}`;
+  ${r.errors.length ? `<div class="callout danger">${icon("alert")}<div>${r.errors.slice(0, 20).map((e) => `Satır ${e.row}: ${esc(e.message)}`).join("<br>")}${r.errors.length > 20 ? `<br>… ${r.errors.length - 20} hata daha` : ""}</div></div>` : ""}
+  ${(r.warnings || []).length ? `<div class="callout warn">${icon("alert")}<div><b>Eski fiyat uyarısı</b> (satırlar yine de alınır):<br>${r.warnings.slice(0, 20).map((w) => `Satır ${w.row}${w.name ? ` (${esc(w.name)})` : ""}: ${esc(w.message)}`).join("<br>")}${r.warnings.length > 20 ? `<br>… ${r.warnings.length - 20} uyarı daha` : ""}</div></div>` : ""}`;
 }
 
 // ======================= KATEGORİLER =======================
@@ -580,6 +649,8 @@ function categoryDialog(c) {
       <div class="img-pick"><div class="pv" id="cPv">${c && c.image ? `<img src="${esc(c.image)}" alt="">` : icon("image")}</div>
         <div class="btns"><label class="btn btn-sm" for="cImg">${icon("upload", "i-sm")} Görsel seç</label><input id="cImg" type="file" accept="image/jpeg,image/png,image/webp" hidden>
         <button type="button" class="btn btn-sm btn-danger-ghost" id="cImgRm" ${c && c.image ? "" : "hidden"}>Görseli kaldır</button><span class="hint">İsteğe bağlı; yoksa simge kullanılır.</span></div></div>
+      <label class="field"><span>Cayma hakkı (bu kategorideki ürünler için)</span><select name="caymaDurumu">${Object.entries(CAYMA).map(([k, l]) => `<option value="${k}" ${(c ? c.caymaDurumu : "var") === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+        <span class="hint">Ürüne özel değer girilmemiş ürünler bunu kullanır. Yeni kategoride değiştirmezseniz kategori adından tahmin edilir.</span></label>
       <label class="switch"><input type="checkbox" name="hidden" ${c && c.hidden ? "checked" : ""}> Mağazada gizli</label>
       ${c && c.productCount ? `<p class="hint" style="margin:0">Bu kategoride ${c.productCount} ürün var.</p>` : ""}`,
     onOpen: () => {
@@ -589,10 +660,14 @@ function categoryDialog(c) {
         try { img = await resizeImage(file, 800); $("#cPv").innerHTML = `<img src="${img}" alt="">`; $("#cImgRm").hidden = false; } catch (er) { toast(er.message, "err"); }
       });
       $("#cImgRm").addEventListener("click", () => { img = null; $("#cPv").innerHTML = icon("image"); $("#cImgRm").hidden = true; });
+      const cs = document.querySelector("dialog.modal:last-of-type [name=caymaDurumu]");
+      if (cs) cs.addEventListener("change", () => { cs.dataset.touched = "1"; });
     },
     onSubmit: async (f) => {
       if (!f.name.value.trim()) throw new Error("Kategori adı gerekli.");
       const body = { name: f.name.value.trim(), emoji: f.emoji.value.trim(), hidden: f.hidden.checked };
+      if (c) body.caymaDurumu = f.caymaDurumu.value;
+      else if (f.caymaDurumu.dataset.touched) body.caymaDurumu = f.caymaDurumu.value;
       if (img !== undefined) body.image = img;
       if (c) await api(`/api/admin/categories/${c.id}`, { method: "PATCH", body });
       else await api("/api/admin/categories", { method: "POST", body });

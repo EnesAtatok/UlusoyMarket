@@ -1,7 +1,7 @@
 "use strict";
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { start } = require("./helpers");
+const { start, REQUIRED_CONSENTS } = require("./helpers");
 
 let s;
 before(async () => {
@@ -143,12 +143,16 @@ test("boş sepet", async () => {
 });
 
 test("telefon başına kupon sınırı (sipariş verildikten sonra)", async () => {
-  const body = { name: "Ali Veli", phone: "05440000001", address: "Meydan Mah. Bir Sok. No:1", zoneId: 2, kvkk: true, items: milk(5), couponCode: "BIRKEZ" };
+  const body = { name: "Ali Veli", phone: "05440000001", address: "Meydan Mah. Bir Sok. No:1", zoneId: 2, consents: REQUIRED_CONSENTS, items: milk(5), couponCode: "BIRKEZ" };
   let r = await s.req("POST", "/api/orders", body);
   assert.equal(r.status, 201, r.text);
   assert.equal(r.json.order.discount, 10);
+  // Kimliksiz teklif telefona göre farklılaşmaz (numaranın kuponu kullanıp kullanmadığı sızmasın); kural gönderimde uygulanır
   r = await quote({ items: milk(5), type: "teslimat", zoneId: 2, couponCode: "BIRKEZ", phone: "0544 000 00 01" });
-  assert.equal(r.json.coupon.message, "Bu kuponu kullanım hakkınız doldu.");
+  assert.equal(r.json.coupon.valid, true);
+  r = await s.req("POST", "/api/orders", { ...body, phone: "0544 000 00 01" });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.error, "Bu kuponu kullanım hakkınız doldu.");
   r = await s.req("POST", "/api/orders", body);
   assert.equal(r.status, 400);
   assert.equal(r.json.code, "KUPON");

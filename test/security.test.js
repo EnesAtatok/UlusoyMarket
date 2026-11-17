@@ -33,7 +33,8 @@ function raw(p, method = "GET") {
 
 const adminRoutes = () =>
   s.inst.router.routes
-    .filter((r) => r.pattern.startsWith("/api/admin/") && r.pattern !== "/api/admin/login")
+    // /api/admin/stream Bearer değil, tek kullanımlık bilet ister (EventSource başlık gönderemez; bkz. sse.test.js)
+    .filter((r) => r.pattern.startsWith("/api/admin/") && r.pattern !== "/api/admin/login" && r.pattern !== "/api/admin/stream")
     .map((r) => ({
       method: r.method,
       // ":id" gibi parametreler örnek değerle doldurulur
@@ -77,14 +78,17 @@ test("başka müşterinin siparişi yanlış anahtar/telefonla okunamaz ve iptal
 
 test("telefonla sorgu hız sınırı sahte anahtar eklenerek atlatılamaz", async () => {
   s.app.limiters.lookup.reset("127.0.0.1");
+  s.app.db.settings.privacy.phoneLookup = true; // varsayılan kapalı; sınır davranışı açıkken denenir
   for (let i = 0; i < 3; i++) assert.equal((await s.req("GET", `/api/orders/1?token=yanlis&phone=0532000${String(i).padStart(4, "0")}`)).status, 404);
   const r = await s.req("GET", "/api/orders/1?token=yanlis&phone=05329999999");
   assert.equal(r.status, 429);
-  assert.equal((await s.req("POST", "/api/orders/1/cancel", { token: "yanlis", phone: "05329999999" })).status, 429);
+  // İptal artık yalnızca token ile: telefon hiç denenmez
+  assert.equal((await s.req("POST", "/api/orders/1/cancel", { token: "yanlis", phone: "05329999999" })).status, 404);
   // Doğru anahtar hız sınırından etkilenmez
   const o = s.app.db.orders[0];
   assert.equal((await s.req("GET", `/api/orders/${o.id}?token=${o.token}`)).status, 200);
   s.app.limiters.lookup.reset("127.0.0.1");
+  s.app.db.settings.privacy.phoneLookup = false;
 });
 
 test("db.json, sessions.json, yedekler ve kaynak dosyalar HTTP ile okunamaz", async () => {

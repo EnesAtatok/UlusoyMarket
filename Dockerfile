@@ -10,10 +10,11 @@ WORKDIR /app
 # Uygulama dosyaları (canlı veri imaja girmez; bkz. .dockerignore)
 COPY package.json server.js ./
 COPY lib ./lib
+COPY scripts ./scripts
 COPY public ./public
 COPY data/seed.json ./data/seed.json
 
-# Kalıcı veri: db.json, sessions.json, backups/, uploads/
+# Kalıcı veri: db.json, sessions.json, audit.json, backups/, uploads/ (DATA_KEY verilirse şifreli)
 RUN mkdir -p /data && chown -R node:node /data
 VOLUME ["/data"]
 

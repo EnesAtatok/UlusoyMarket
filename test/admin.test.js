@@ -208,6 +208,16 @@ test("ürün toplu işlemleri: gizle/göster/tükendi/öne çıkar/taşı/fiyat/
   assert.equal(r.status, 400);
   r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "uçur" }, admin);
   assert.equal(r.status, 400);
+  // Toplu cayma durumu (null = kategoriden); geçersiz değer reddedilir
+  r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "cayma", caymaDurumu: "yok_cabuk_bozulan" }, admin);
+  assert.equal(r.json.processed, 2);
+  assert.ok(ids.every((id) => prod(id).caymaDurumu === "yok_cabuk_bozulan"));
+  r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "cayma", caymaDurumu: null }, admin);
+  assert.ok(ids.every((id) => prod(id).caymaDurumu === null));
+  r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "cayma", caymaDurumu: "belki" }, admin);
+  assert.equal(r.status, 400);
+  r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "cayma", caymaDurumu: "var" }, staff);
+  assert.equal(r.status, 403);
   const files = ids.map((id) => path.join(s.dataDir, "uploads", path.basename(prod(id).image)));
   r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "delete" }, admin);
   assert.equal(r.json.processed, 2);

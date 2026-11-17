@@ -2,9 +2,9 @@
 import { $, esc, tl, icon, telHref, waHref, api, save, toast } from "./lib.js";
 import {
   S, emit, cartLines, cartCount, cartLocalTotal, zones, zoneById, status, storeInfo, setDelivery, setCoupon,
-  saveProfile, requestQuote, applyQuote, blockingErrors, clearCart, quoteBody,
+  saveProfile, forgetPersonal, requestQuote, applyQuote, blockingErrors, clearCart, quoteBody,
 } from "./state.js";
-import { media, qtyControl } from "./shop.js";
+import { media, qtyControl, thumb } from "./shop.js";
 import { rememberOrder } from "./orders.js";
 
 // ---------- Form karakter kuralları (sunucudakiyle aynı; eski prototipten korunur) ----------
@@ -139,11 +139,11 @@ export function closedBox() {
   const st = status();
   const i = storeInfo();
   return `<div class="closed-box" role="status">
-    <p class="closed-title">${icon("moon")}${esc(st.label || "Şu an sipariş alamıyoruz")}</p>
+    <p class="closed-title">${icon("clock")}${esc(st.label || "Şu an sipariş alamıyoruz")}</p>
     <p>${esc(st.message || "")}</p>
     <p class="closed-actions">
       ${i.phone ? `<a class="btn btn-primary" href="${esc(telHref(i.phone))}">${icon("phone")}Ara</a>` : ""}
-      ${i.whatsapp ? `<a class="btn btn-ghost" href="${esc(waHref(i.whatsapp, "Merhaba, sipariş vermek istiyorum."))}" target="_blank" rel="noopener">${icon("chat")}WhatsApp</a>` : ""}
+      ${i.whatsapp ? `<a class="btn btn-night" href="${esc(waHref(i.whatsapp, "Merhaba, sipariş vermek istiyorum."))}" target="_blank" rel="noopener">${icon("wa")}WhatsApp</a>` : ""}
     </p>
   </div>`;
 }
@@ -174,7 +174,7 @@ function ctaHtml(q, { compact = false } = {}) {
 
 function emptyCart() {
   return `<div class="empty empty-cart">
-    <span class="empty-art" aria-hidden="true"><img src="/img/logo.webp" alt="" width="72" height="76"></span>
+    <span class="empty-art" aria-hidden="true">${icon("basket")}</span>
     <p class="empty-title">Sepetiniz boş.</p>
     <p>Reyonlara göz atın ya da aradığınız ürünü yukarıdan yazın.</p>
     <p class="empty-actions"><a class="btn btn-primary" href="#/kategoriler">Alışverişe başla</a></p>
@@ -308,6 +308,7 @@ export function renderCartBar(visible, mode = "shop") {
   </a>`;
 }
 
+
 // ---------- Sipariş formu ----------
 const field = (id, label, control, { hint = "", counter = "" } = {}) => `<div class="field" data-field="${id}">
   <label class="field-label" for="${id}">${label}</label>
@@ -316,7 +317,13 @@ const field = (id, label, control, { hint = "", counter = "" } = {}) => `<div cl
   <p class="field-error" id="${id}Err" hidden></p>
 </div>`;
 
+const legal = () => S.store?.legal || {};
+const checkoutText = () => S.store?.checkout || {};
+const consentList = () => (legal().consents || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+const docByKey = (k) => (legal().docs || []).find((d) => d.key === k);
+
 function savedAddresses() {
+  if (!S.profile.remember) return "";
   const list = S.addresses.filter((a) => zoneById(a.zoneId));
   if (!list.length) return "";
   return `<fieldset class="saved-addr"><legend class="field-label">Kayıtlı adresleriniz</legend>
@@ -330,6 +337,49 @@ function savedAddresses() {
   </fieldset>`;
 }
 
+/** Onay kutusu etiketi: sunucudaki labelParts; belge parçaları pencere içinde önizleme açar */
+function consentLabel(c) {
+  const parts = c.labelParts && c.labelParts.length ? c.labelParts : [{ text: c.text || c.label || "" }];
+  return parts
+    .map((p) =>
+      p.doc
+        ? `<a href="${esc(p.href || docByKey(p.doc)?.path || "#")}" target="_blank" rel="noopener" data-action="doc-preview" data-doc="${esc(p.doc)}">${esc(p.text)}</a>`
+        : esc(p.text),
+    )
+    .join("");
+}
+
+function consentsHtml() {
+  const list = consentList();
+  if (!list.length) return "";
+  return `<fieldset class="fs fs-consents" data-region="consents">
+    <legend>Onaylar</legend>
+    <p class="consent-help">Bağlantılar, siparişinize göre doldurulmuş metni bu sayfada açar. Zorunlu kutular işaretlenmeden sipariş verilemez.</p>
+    ${list
+      .map(
+        (c) => `<div class="consent" data-consent="${esc(c.key)}">
+        <div class="check check-legal">
+          <input type="checkbox" name="consent" value="${esc(c.key)}" id="cs-${esc(c.key)}" aria-describedby="cs-${esc(c.key)}-err"${c.required ? ' aria-required="true"' : ""}>
+          <label for="cs-${esc(c.key)}">${consentLabel(c)} <span class="${c.required ? "req" : "opt"}">${c.required ? "(zorunlu)" : "(isteğe bağlı)"}</span></label>
+        </div>
+        <p class="field-error" id="cs-${esc(c.key)}-err" hidden></p>
+      </div>`,
+      )
+      .join("")}
+  </fieldset>`;
+}
+
+function rememberHtml() {
+  const hasSaved = S.profile.remember && (S.profile.name || S.profile.phone || S.addresses.length);
+  return `<div class="remember">
+    <div class="check">
+      <input type="checkbox" id="rememberMe" name="remember"${S.profile.remember ? " checked" : ""}>
+      <label for="rememberMe">Ad, telefon ve adres bilgilerimi sonraki siparişlerde kolaylık için yalnızca bu cihazda sakla. <span class="opt">(isteğe bağlı)</span> <a href="/cerez-politikasi" target="_blank" rel="noopener" data-action="doc-preview" data-doc="cerez">Ayrıntı</a></label>
+    </div>
+    ${hasSaved ? `<button class="btn btn-text" type="button" data-action="forget-me">Bu cihazdaki bilgilerimi sil</button>` : ""}
+  </div>`;
+}
+
 export function checkoutView() {
   const lines = cartLines();
   if (!lines.length) return null;
@@ -337,17 +387,19 @@ export function checkoutView() {
   const pf = S.profile;
   const type = S.delivery.type;
   const pay = pf.payment && o.payments?.[pf.payment] ? pf.payment : o.payments?.nakit ? "nakit" : "kart";
+  if (pf.payment !== pay) saveProfile({ payment: pay });
   const sub = ["ara", "benzer", "cikar"].includes(pf.substitution) ? pf.substitution : "ara";
   const st = status();
+  const noteHint = checkoutText().noteHint || "Sağlık bilgisi gibi özel bilgiler yazmayın.";
   return `<div class="page-pad checkout">
     <a class="back-link" href="#/sepet">${icon("left")}Sepete dön</a>
     <h1 class="page-h1">Siparişi tamamla</h1>
     <div class="cart-cols">
       <form class="checkout-form" id="orderForm" novalidate>
-        <div class="form-alert" id="formAlert" role="alert" hidden></div>
+        <div class="form-alert" id="formAlert" role="alert" tabindex="-1" hidden></div>
         ${!st.acceptingOrders ? closedBox() : preorderNote()}
 
-        <fieldset class="fs">
+        <fieldset class="fs" id="fsDelivery">
           <legend>Teslimat</legend>
           <div data-region="delivery">${deliveryPicker()}</div>
           <p class="field-error" id="zoneErr" hidden></p>
@@ -357,13 +409,14 @@ export function checkoutView() {
           </div>
         </fieldset>
 
-        <fieldset class="fs">
+        <fieldset class="fs" id="fsContact">
           <legend>İletişim</legend>
           ${field("name", "Ad soyad", `<input id="name" name="name" autocomplete="name" maxlength="${RULES.nameMax}" data-clean="name" placeholder="Örn. Ayşe Yılmaz" value="${esc(pf.name || "")}" aria-describedby="nameErr">`)}
           ${field("phone", "Telefon", `<input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" data-clean="phone" placeholder="05XX XXX XX XX" value="${esc(pf.phone || "")}" aria-describedby="phoneHint phoneErr">`, { hint: "0 ile başlayan 11 haneli numara. Kurye gerekirse bu numarayı arar." })}
+          ${rememberHtml()}
         </fieldset>
 
-        <fieldset class="fs">
+        <fieldset class="fs" id="fsPayment">
           <legend>Ödeme <span class="opt">(teslimatta)</span></legend>
           <div class="seg seg-wrap" role="radiogroup" aria-label="Ödeme yöntemi">
             ${o.payments?.nakit ? `<label class="seg-opt"><input type="radio" name="payment" value="nakit"${pay === "nakit" ? " checked" : ""}><span>Nakit</span></label>` : ""}
@@ -379,47 +432,131 @@ export function checkoutView() {
           <legend>Bir ürün bulunamazsa</legend>
           <div class="radio-list">
             <label class="radio"><input type="radio" name="substitution" value="ara"${sub === "ara" ? " checked" : ""}><span>Beni arayın</span></label>
-            <label class="radio"><input type="radio" name="substitution" value="benzer"${sub === "benzer" ? " checked" : ""}><span>Benzeriyle değiştirin</span></label>
             <label class="radio"><input type="radio" name="substitution" value="cikar"${sub === "cikar" ? " checked" : ""}><span>Siparişten çıkarın</span></label>
+            <label class="radio"><input type="radio" name="substitution" value="benzer"${sub === "benzer" ? " checked" : ""}><span>Benzeriyle değiştirin <span class="opt">(fiyat farkı olabilir)</span></span></label>
           </div>
         </fieldset>
 
         <fieldset class="fs">
           <legend>Sipariş notu <span class="opt">(isteğe bağlı)</span></legend>
-          ${field("note", '<span class="sr-only">Sipariş notu</span>', `<textarea id="note" name="note" rows="2" maxlength="${RULES.noteMax}" placeholder="Örn. Zili çalmayın, kapıya bırakın" aria-describedby="noteHint"></textarea>`, { counter: `<span class="counter" data-counter-for="note">0 / ${RULES.noteMax}</span>` })}
+          ${field("note", '<span class="sr-only">Sipariş notu</span>', `<textarea id="note" name="note" rows="2" maxlength="${RULES.noteMax}" placeholder="Örn. Zili çalmayın, kapıya bırakın" aria-describedby="noteHint"></textarea>`, { hint: esc(noteHint), counter: `<span class="counter" data-counter-for="note">0 / ${RULES.noteMax}</span>` })}
         </fieldset>
 
-        <div class="consent field" data-field="kvkk">
-          <label class="check"><input type="checkbox" name="kvkk" id="kvkk" aria-describedby="kvkkErr"><span><a href="/kvkk" target="_blank" rel="noopener">KVKK aydınlatma metnini</a> okudum, <a href="/mesafeli-satis" target="_blank" rel="noopener">mesafeli satış sözleşmesini</a> onaylıyorum.</span></label>
-          <p class="field-error" id="kvkkErr" hidden></p>
-        </div>
+        <section class="review" data-region="review" aria-labelledby="reviewTitle">${reviewHtml()}</section>
+
+        ${consentsHtml()}
         <div class="hp" aria-hidden="true"><label for="website">Web sitesi</label><input id="website" name="website" tabindex="-1" autocomplete="off"></div>
 
         <div class="submit-row" data-region="submit">${submitHtml()}</div>
       </form>
-      <aside class="cart-side summary-card" data-region="co-summary" aria-label="Sipariş özeti">${coSummary()}</aside>
+      <aside class="cart-side summary-card" data-region="co-summary" aria-label="Sepet özeti">${coSummary()}</aside>
     </div>
   </div>`;
+}
+
+const PAY_TEXT = { nakit: "kapıda nakit", kart: "kapıda kredi/banka kartı" };
+function currentPayment() {
+  return document.querySelector('#orderForm input[name="payment"]:checked')?.value || S.profile.payment || "nakit";
+}
+
+/** "Siparişi gözden geçirin" kutusu (YASAL.md §2.1 madde 3) */
+function reviewHtml() {
+  const q = S.quote;
+  const co = checkoutText();
+  const seller = co.seller || {};
+  const lines = cartLines();
+  const type = S.delivery.type;
+  const z = zoneById(S.delivery.zoneId);
+  const addr = document.querySelector("#orderForm #address")?.value.trim() || "";
+  const pay = currentPayment();
+  const eta = q?.etaMinutes || z?.etaMinutes || S.store.ordering?.etaMinutes;
+  const items = lines
+    .map(({ product: p, qty }) => {
+      const ql = q?.items?.find((i) => i.productId === p.id);
+      const label = ql?.caymaLabel || p.caymaLabel || "";
+      const code = ql?.caymaDurumu || p.caymaDurumu || "";
+      const lt = ql && ql.qty === qty ? ql.lineTotal : p.price * qty;
+      const unit = p.unit && p.unit !== "adet" ? ` / ${esc(p.unit)}` : "";
+      return `<li class="rv-item">
+        ${thumb(p.id)}
+        <div class="rv-info">
+          <p class="rv-name">${esc(p.name)}${p.brand ? ` <span class="muted">(${esc(p.brand)})</span>` : ""}</p>
+          <p class="rv-meta">${qty} × ${tl(p.price)}${unit}</p>
+          ${label ? `<p class="cayma cayma-${esc(code)}">Cayma: ${esc(label)}</p>` : ""}
+        </div>
+        <p class="rv-total">${tl(lt)}</p>
+      </li>`;
+    })
+    .join("");
+  const fee = !q ? "Hesaplanıyor" : type === "gelal" ? "Yok (gel-al)" : q.deliveryFee ? tl(q.deliveryFee) : "Ücretsiz";
+  return `<h2 class="review-title" id="reviewTitle">Siparişi gözden geçirin</h2>
+    <p class="rv-seller"><span class="muted">Satıcı:</span> ${esc(seller.title || "[unvan]")} (${esc(seller.name || storeInfo().name || "")})</p>
+    <ul class="rv-items">${items}</ul>
+    <p class="rv-edit"><a href="#/sepet">Ürünleri düzenle</a></p>
+    <dl class="totals rv-totals">
+      <div><dt>Ara toplam</dt><dd>${q ? tl(q.subtotal) : tl(cartLocalTotal())}</dd></div>
+      ${q?.discount ? `<div class="totals-discount"><dt>İndirim</dt><dd>−${tl(q.discount)}</dd></div>` : ""}
+      <div><dt>Teslimat ücreti</dt><dd>${fee}</dd></div>
+      <div class="totals-total"><dt>Toplam <span class="opt">(KDV dahil)</span></dt><dd>${q ? tl(q.total) : "…"}</dd></div>
+    </dl>
+    <dl class="kv rv-kv">
+      <div><dt>Teslimat</dt><dd>${type === "gelal" ? `Dükkândan teslim: ${esc(storeInfo().address || "")}` : `Adrese teslim${z ? `, ${esc(z.name)}` : ""}${addr ? `: ${esc(addr)}` : ""}`}${eta ? `. Tahmini süre ~${eta} dk.` : ""} <a href="#fsDelivery" data-action="jump">Düzenle</a></dd></div>
+      <div><dt>Ödeme</dt><dd>${esc(type === "gelal" ? (pay === "kart" ? "dükkânda kredi/banka kartı" : "dükkânda nakit") : PAY_TEXT[pay] || pay)} <a href="#fsPayment" data-action="jump">Düzenle</a></dd></div>
+    </dl>
+    <p class="rv-cayma">Her ürünün altında o ürün için cayma hakkı olup olmadığı yazar. Çabuk bozulan gıdalarda cayma hakkı yoktur; ayıplı üründe her zaman iade ya da değişim isteyebilirsiniz. <a href="/iade-kosullari" target="_blank" rel="noopener" data-action="doc-preview" data-doc="iade">İptal, İade ve Cayma Koşulları</a></p>
+    ${q?.hasWeighed && co.weighedNotice ? `<p class="note note-info">${icon("alert")}<span>${esc(co.weighedNotice)}</span></p>` : ""}`;
+}
+
+function paymentNotice() {
+  const q = S.quote;
+  const co = checkoutText();
+  if (q?.paymentNotice && S.profile.payment === currentPayment()) return q.paymentNotice;
+  const tpl = S.delivery.type === "gelal" ? co.paymentNoticePickup : co.paymentNotice;
+  if (!tpl) return "";
+  return tpl.replace("{{toplam}}", q ? tl(q.total) : "sipariş toplamı").replace("{{odemeSekli}}", PAY_TEXT[currentPayment()] || "kapıda");
 }
 
 function submitHtml() {
   const q = S.quote;
   const st = status();
   if (!st.acceptingOrders) return "";
+  const co = checkoutText();
   const errs = blockingErrors(q).filter((e) => e.code !== "BOLGE_SECIN");
+  const label = co.buttonLabel || "Siparişi onayla — ödeme yükümlülüğü doğurur";
+  const short = co.buttonLabelShort || label;
+  const notice = paymentNotice();
   return `${errs.length ? `<p class="cta-msg" role="status">${esc(errs[0].message)}</p>` : ""}
-    <button class="btn btn-primary btn-block btn-lg" type="submit" id="submitOrder"${errs.length ? ' aria-disabled="true" data-blocked="1"' : ""}>${st.preorder ? "Ön siparişi onayla" : "Siparişi onayla"}${q ? `<span class="btn-amount">${tl(q.total)}</span>` : ""}</button>
-    <p class="submit-note">Ödemeyi teslimatta yaparsınız. Onayladıktan sonra siparişi bu sayfadan takip edebilirsiniz.</p>`;
+    ${st.preorder ? `<p class="submit-note">Mağaza şu an kapalı: siparişiniz ön sipariş olarak alınır, açılışta hazırlanır.</p>` : ""}
+    ${notice ? `<p class="pay-notice" id="payNotice">${esc(notice)}</p>` : ""}
+    <button class="btn btn-primary btn-block btn-lg btn-order" type="submit" id="submitOrder"${notice ? ' aria-describedby="payNotice"' : ""}${errs.length || !requiredChecked() ? ' aria-disabled="true"' : ""}${errs.length ? ' data-blocked="1"' : ""}>
+      <span class="lbl-long">${esc(label)}</span><span class="lbl-short" aria-hidden="true">${esc(short)}</span>
+    </button>`;
+}
+
+function requiredChecked() {
+  const form = document.getElementById("orderForm");
+  if (!form) return false;
+  return consentList()
+    .filter((c) => c.required)
+    .every((c) => form.querySelector(`#cs-${CSS.escape(c.key)}`)?.checked);
+}
+/** Onay kutuları değişince düğmenin görünümünü günceller (tıklanabilir kalır: basınca eksik kutu gösterilir) */
+export function syncConsents() {
+  const btn = document.getElementById("submitOrder");
+  if (!btn) return;
+  const blocked = btn.dataset.blocked === "1";
+  if (!blocked && requiredChecked()) btn.removeAttribute("aria-disabled");
+  else btn.setAttribute("aria-disabled", "true");
 }
 
 function coSummary() {
   const q = S.quote;
   const lines = cartLines();
   return `<h2 class="sum-title">Sepetiniz <span class="result-count">${cartCount()} ürün</span></h2>
-    <ul class="co-lines">${lines
+    <ul class="co-lines co-lines-img">${lines
       .map((l) => {
         const ql = quoteLine(l.product.id);
-        return `<li><span class="co-q">${l.qty}×</span><span class="co-n">${esc(l.product.name)}</span><span class="co-t">${tl(ql && ql.qty === l.qty ? ql.lineTotal : l.product.price * l.qty)}</span></li>`;
+        return `<li>${thumb(l.product.id)}<span class="co-q">${l.qty}×</span><span class="co-n">${esc(l.product.name)}</span><span class="co-t">${tl(ql && ql.qty === l.qty ? ql.lineTotal : l.product.price * l.qty)}</span></li>`;
       })
       .join("")}</ul>
     <a class="btn btn-text" href="#/sepet">Sepeti düzenle</a>
@@ -435,10 +572,21 @@ export function refreshCheckout() {
   refreshSummary(document.querySelector('[data-region="co-summary"]'), coSummary);
   const sub = form.querySelector('[data-region="submit"]');
   const btn = sub.querySelector("#submitOrder");
-  if (!btn || !btn.disabled) sub.innerHTML = submitHtml();
+  if (!btn || !btn.disabled) {
+    const focused = sub.contains(document.activeElement);
+    sub.innerHTML = submitHtml();
+    if (focused) sub.querySelector("#submitOrder")?.focus();
+  }
+  refreshReview();
   refreshSummary(form.querySelector('[data-region="delivery"]'), deliveryPicker);
   form.querySelector('[data-region="address"]').hidden = S.delivery.type === "gelal";
   renderChangeChips();
+}
+export function refreshReview() {
+  const el = document.querySelector('#orderForm [data-region="review"]');
+  if (el && !el.contains(document.activeElement)) el.innerHTML = reviewHtml();
+  const n = document.getElementById("payNotice");
+  if (n) n.textContent = paymentNotice();
 }
 
 function renderChangeChips() {
@@ -461,8 +609,8 @@ function renderChangeChips() {
 export function initCheckout() {
   const form = $("#orderForm");
   if (!form) return;
-  // Son kullanılan adresi önceden doldur
-  const last = S.addresses.find((a) => a.zoneId === S.delivery.zoneId) || null;
+  // Son kullanılan adresi önceden doldur (yalnızca "bu cihazda sakla" açıksa)
+  const last = S.profile.remember ? S.addresses.find((a) => a.zoneId === S.delivery.zoneId) || null : null;
   if (last && S.delivery.type === "teslimat") {
     form.address.value = last.address;
     const r = form.querySelector(`input[name="savedAddr"][value="${last.id}"]`);
@@ -471,7 +619,26 @@ export function initCheckout() {
   for (const el of form.querySelectorAll("[data-clean]")) cleanField(el);
   cleanField(form.note);
   renderChangeChips();
+  refreshReview();
   requestQuote.flush();
+}
+
+/** "Bilgilerimi bu cihazda sakla" kutusu ve "bilgilerimi sil" */
+export function setRemember(on) {
+  if (on) {
+    const form = document.getElementById("orderForm");
+    const name = form?.name?.value.trim();
+    const phone = form?.phone?.value;
+    saveProfile({ remember: true, ...(name ? { name } : {}), ...(/^0\d{10}$/.test(phone || "") ? { phone } : {}) });
+  } else forgetPersonal();
+}
+export function forgetMe() {
+  forgetPersonal();
+  const box = document.getElementById("rememberMe");
+  if (box) box.checked = false;
+  document.querySelector(".saved-addr")?.remove();
+  document.querySelector('[data-action="forget-me"]')?.remove();
+  toast("Bu cihazdaki ad, telefon ve adres bilgileriniz silindi");
 }
 
 function showFieldError(form, name, msg) {
@@ -486,10 +653,24 @@ function showFieldError(form, name, msg) {
     else input.removeAttribute("aria-invalid");
   }
 }
+function showConsentError(form, key, msg) {
+  const err = form.querySelector(`#cs-${CSS.escape(key)}-err`);
+  const box = form.querySelector(`#cs-${CSS.escape(key)}`);
+  if (err) {
+    err.textContent = msg;
+    err.hidden = !msg;
+  }
+  if (box) {
+    if (msg) box.setAttribute("aria-invalid", "true");
+    else box.removeAttribute("aria-invalid");
+    box.closest(".consent")?.classList.toggle("has-error", !!msg);
+  }
+}
 export function clearFieldError(el) {
   const form = el.form || el.closest("form");
   if (!form || form.id !== "orderForm" || !el.name) return;
-  showFieldError(form, el.name, "");
+  if (el.name === "consent") showConsentError(form, el.value, "");
+  else showFieldError(form, el.name, "");
   const alert = form.querySelector("#formAlert");
   if (alert) alert.hidden = true;
 }
@@ -512,8 +693,39 @@ function validate(form) {
     const v = Number(form.changeFor.value);
     if (S.quote && v < S.quote.total) errs.push(["changeFor", `Para üstü tutarı sipariş toplamından (${tl(S.quote.total)}) az olamaz.`]);
   }
-  if (!form.kvkk.checked) errs.push(["kvkk", "Devam etmek için KVKK aydınlatma metnini ve mesafeli satış sözleşmesini onaylayın."]);
+  for (const c of consentList()) {
+    if (c.required && !form.querySelector(`#cs-${CSS.escape(c.key)}`)?.checked) errs.push([`consent:${c.key}`, consentError(c)]);
+  }
   return errs;
+}
+function consentError(c) {
+  const doc = (c.labelParts || []).find((p) => p.doc);
+  return `Siparişi verebilmek için bu kutuyu işaretleyin${doc ? ` (${doc.text})` : ""}.`;
+}
+
+function focusError(form, key) {
+  const el =
+    key === "zone"
+      ? form.querySelector('select[name="zoneSel"]')
+      : key.startsWith("consent:")
+        ? form.querySelector(`#cs-${CSS.escape(key.slice(8))}`)
+        : form.querySelector(`[name="${key}"]`);
+  if (el) {
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+/** Yasal metinler değişti (409 METIN_DEGISTI): mağaza verisini tazele, kutuları işaretsiz yeniden çiz */
+async function reloadConsents(form, reloadStore) {
+  await reloadStore();
+  const region = form.querySelector('[data-region="consents"]');
+  if (region) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = consentsHtml();
+    region.replaceWith(tmp.firstElementChild);
+  }
+  syncConsents();
 }
 
 let submitting = false;
@@ -521,7 +733,8 @@ export async function submitOrder(form, navigate, reloadStore) {
   if (submitting) return;
   const alert = form.querySelector("#formAlert");
   alert.hidden = true;
-  for (const n of ["name", "phone", "address", "changeFor", "kvkk", "zone"]) showFieldError(form, n, "");
+  for (const n of ["name", "phone", "address", "changeFor", "zone"]) showFieldError(form, n, "");
+  for (const c of consentList()) showConsentError(form, c.key, "");
   const blocked = blockingErrors(S.quote).filter((e) => e.code !== "BOLGE_SECIN");
   if (blocked.length) {
     alert.innerHTML = `<p>${esc(blocked[0].message)}</p><p><a href="#/sepet">Sepete dönüp ürün ekleyin</a></p>`;
@@ -531,15 +744,28 @@ export async function submitOrder(form, navigate, reloadStore) {
   }
   const errs = validate(form);
   if (errs.length) {
-    for (const [n, m] of errs) showFieldError(form, n, m);
-    alert.innerHTML = errs.length > 1 ? `<p>Lütfen ${errs.length} alanı düzeltin.</p>` : `<p>${esc(errs[0][1])}</p>`;
+    for (const [n, m] of errs) {
+      if (n.startsWith("consent:")) showConsentError(form, n.slice(8), m);
+      else showFieldError(form, n, m);
+    }
+    const consentErrs = errs.filter(([n]) => n.startsWith("consent:")).length;
+    alert.innerHTML =
+      consentErrs === errs.length
+        ? `<p>Siparişi vermek için ${consentErrs === 1 ? "1 zorunlu onay kutusunu" : `${consentErrs} zorunlu onay kutusunu`} işaretleyin.</p>`
+        : errs.length > 1
+          ? `<p>Lütfen ${errs.length} alanı düzeltin.</p>`
+          : `<p>${esc(errs[0][1])}</p>`;
     alert.hidden = false;
-    const first = errs[0][0] === "zone" ? form.querySelector('select[name="zoneSel"]') : form.querySelector(`[name="${errs[0][0]}"]`);
-    first?.focus();
+    focusError(form, errs[0][0]);
     return;
   }
   const payment = form.querySelector('input[name="payment"]:checked')?.value || "nakit";
   const substitution = form.querySelector('input[name="substitution"]:checked')?.value || "ara";
+  const consents = [...form.querySelectorAll('input[name="consent"]:checked')].map((c) => c.value);
+  const shown = new Set(consentList().flatMap((c) => c.docs || []));
+  const docVersions = {};
+  for (const d of legal().docs || []) if (shown.has(d.key) && d.version) docVersions[d.key] = d.version;
+  const remember = !!form.querySelector("#rememberMe")?.checked;
   const body = {
     ...quoteBody(),
     name: form.name.value.trim().replace(/\s+/g, " "),
@@ -549,7 +775,8 @@ export async function submitOrder(form, navigate, reloadStore) {
     changeFor: payment === "nakit" && form.changeFor.value ? Number(form.changeFor.value) : undefined,
     note: form.note.value.trim(),
     substitution,
-    kvkk: form.kvkk.checked === true,
+    consents,
+    docVersions,
     website: form.website.value,
   };
   if (S.couponMsg && !S.couponMsg.valid) delete body.couponCode;
@@ -560,12 +787,16 @@ export async function submitOrder(form, navigate, reloadStore) {
     btn.dataset.label = btn.innerHTML;
     btn.innerHTML = `<span class="spinner" aria-hidden="true"></span>Sipariş gönderiliyor`;
   }
-  saveProfile({ name: body.name, phone: body.phone, payment, substitution });
+  if (remember) saveProfile({ remember: true, payment, substitution, name: body.name, phone: body.phone });
+  else {
+    saveProfile({ payment, substitution });
+    forgetPersonal();
+  }
   try {
     const res = await api("/api/orders", { method: "POST", body });
     if (!res.id) throw new Error("Sipariş alınamadı. Lütfen marketi arayın.");
     rememberOrder(res.id, res.token, res.order);
-    if (S.delivery.type === "teslimat") rememberAddress(S.delivery.zoneId, body.address);
+    if (remember && S.delivery.type === "teslimat") rememberAddress(S.delivery.zoneId, body.address);
     setCoupon("");
     S.couponMsg = null;
     S.notices = [];
@@ -585,10 +816,17 @@ export async function submitOrder(form, navigate, reloadStore) {
     }
     if (["KAPALI", "DURDURULDU", "TUKENDI", "SATISTA_DEGIL", "ADET_SINIRI"].includes(e.code)) reloadStore();
     if (e.code === "BOLGE_SECIN" || e.code === "BOLGE_GECERSIZ") showFieldError(form, "zone", e.message);
-    alert.innerHTML = `<p>${esc(e.message)}</p>${e.code === "ENGELLI" || e.code === "AKTIF_SINIR" ? `<p><a href="${esc(telHref(storeInfo().phone))}">Marketi arayın: ${esc(storeInfo().phone || "")}</a></p>` : ""}`;
+    if (e.code === "METIN_DEGISTI") {
+      await reloadConsents(form, reloadStore).catch(() => {});
+      alert.innerHTML = `<p>Yasal metinler siz bu sayfadayken güncellendi. Güncel metinleri inceleyip onay kutularını yeniden işaretleyin.</p>`;
+    } else {
+      alert.innerHTML = `<p>${esc(e.message)}</p>${e.code === "ENGELLI" || e.code === "AKTIF_SINIR" ? `<p><a href="${esc(telHref(storeInfo().phone))}">Marketi arayın: ${esc(storeInfo().phone || "")}</a></p>` : ""}`;
+    }
+    if (e.code === "ONAY") for (const k of data.missing || []) showConsentError(form, k, "Bu onay zorunludur.");
     alert.hidden = false;
     alert.scrollIntoView({ block: "center", behavior: "smooth" });
-    toast(e.message, { tone: "error", ms: 4000 });
+    if (e.code === "METIN_DEGISTI" || e.code === "ONAY") form.querySelector('[data-region="consents"] input')?.focus({ preventScroll: true });
+    else toast(e.message, { tone: "error", ms: 4000 });
   } finally {
     submitting = false;
     const b = form.querySelector("#submitOrder");
@@ -596,8 +834,45 @@ export async function submitOrder(form, navigate, reloadStore) {
       b.disabled = false;
       if (b.dataset.label) b.innerHTML = b.dataset.label;
       refreshCheckout();
+      syncConsents();
     }
   }
+}
+
+// ---------- Belge önizlemesi (siparişi kaybettirmeden, sepete göre doldurulmuş) ----------
+export async function openDocPreview(key) {
+  const dlg = $("#docDialog");
+  const doc = docByKey(key);
+  const title = doc?.title || "Belge";
+  dlg.innerHTML = `<div class="sheet-inner doc-sheet">
+    <button class="icon-btn sheet-close" type="button" data-action="close-dialog" aria-label="Kapat">${icon("x")}</button>
+    <h2 class="sheet-title" id="docTitle">${esc(title)}</h2>
+    <div class="doc-body" aria-busy="true"><div class="sk sk-card"></div><div class="sk sk-card"></div></div>
+    <div class="sheet-actions"><a class="btn btn-ghost" href="${esc(doc?.path || "/")}" target="_blank" rel="noopener">Yeni sekmede aç</a><button class="btn btn-primary" type="button" data-action="close-dialog">Kapat</button></div>
+  </div>`;
+  if (!dlg.open) dlg.showModal();
+  dlg.querySelector(".sheet-close").focus();
+  const form = document.getElementById("orderForm");
+  const body = {
+    ...quoteBody(),
+    docs: [key],
+    payment: currentPayment(),
+    substitution: form?.querySelector('input[name="substitution"]:checked')?.value,
+    name: form?.name?.value.trim() || undefined,
+    phone: form?.phone?.value || undefined,
+    address: S.delivery.type === "teslimat" ? form?.address?.value.trim() || undefined : undefined,
+    changeFor: form?.changeFor?.value ? Number(form.changeFor.value) : undefined,
+  };
+  const box = dlg.querySelector(".doc-body");
+  try {
+    const r = await api("/api/orders/preview-documents", { method: "POST", body });
+    const d = (r.docs || []).find((x) => x.key === key) || (r.docs || [])[0];
+    if (!d) throw new Error("Belge bulunamadı.");
+    box.innerHTML = `<div class="doc-text">${d.html}</div><p class="doc-version">Metin sürümü: <code>${esc(String(doc?.version || d.version || "").slice(0, 12))}</code></p>`;
+  } catch (e) {
+    box.innerHTML = `<p class="field-error">${esc(e.message)}</p><p>Metni <a href="${esc(doc?.path || "/")}" target="_blank" rel="noopener">yeni sekmede</a> açabilirsiniz.</p>`;
+  }
+  box.removeAttribute("aria-busy");
 }
 
 function rememberAddress(zoneId, address) {

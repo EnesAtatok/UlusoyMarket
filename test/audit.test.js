@@ -224,11 +224,11 @@ test("eşzamanlı kullanıcı istekleri: son yönetici kuralı ve aynı kullanı
 test("statik: sonda nokta / büyük harf .HTML / NTFS akışı ile .html ve gizli dosya denetimi atlatılamaz", async () => {
   const s = await start();
   try {
-    for (const p of ["/panel.html.", "/index.HTML", "/panel.html::$DATA", "/img/logo.webp.", "/uploads/x%5C.gizli", "/js%5C..%5Cpanel.html"]) {
+    for (const p of ["/panel.html.", "/index.HTML", "/panel.html::$DATA", "/img/logo-96.webp.", "/uploads/x%5C.gizli", "/js%5C..%5Cpanel.html"]) {
       const r = await s.req("GET", p);
       assert.equal(r.status, 404, `${p} → ${r.status}`);
     }
-    assert.equal((await s.req("GET", "/img/logo.webp")).status, 200);
+    assert.equal((await s.req("GET", "/img/logo-96.webp")).status, 200);
   } finally {
     await s.close();
   }

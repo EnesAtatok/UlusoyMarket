@@ -1,15 +1,35 @@
 // Ana sayfa, katalog, ürün kartı ve ürün ayrıntı penceresi.
 import { esc, tl, icon, fold, telHref, waHref, $ } from "./lib.js";
 import { S, qtyOf, status, storeInfo, zones } from "./state.js";
+import { gaugeHtml } from "./hours.js";
 
-// ---------- Ürün kartı ----------
+// ---------- Görsel ve yer tutucu ----------
+// Yüklenemeyen görsel adresleri: bir kez hata veren görsel sonraki çizimlerde doğrudan emojiye düşer
+export const failedImgs = new Set();
+const okImg = (src) => src && !failedImgs.has(src);
+/** <img> + hata olursa yerine geçecek emoji (app.js'teki "error" dinleyicisi değiştirir) */
+export function imgTag(src, fallback, { size = 300, eager = false, cls = "" } = {}) {
+  return `<img${cls ? ` class="${cls}"` : ""} src="${esc(src)}" alt="" width="${size}" height="${size}" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async" data-fallback="${esc(fallback || "🛒")}">`;
+}
+
 export function media(p, big = false) {
   const cat = S.catById.get(p.categoryId);
-  const tint = cat ? cat.tint : 0;
-  const inner = p.image
-    ? `<img src="${esc(p.image)}" alt="" loading="lazy" decoding="async">`
-    : `<span class="emoji" aria-hidden="true">${esc(p.emoji || cat?.emoji || "🛒")}</span>`;
-  return `<span class="media ${p.image ? "has-img" : `tint-${tint}`}${big ? " media-big" : ""}">${inner}</span>`;
+  const emoji = p.emoji || cat?.emoji || "🛒";
+  const has = okImg(p.image);
+  const inner = has ? imgTag(p.image, emoji, { size: big ? 600 : 300, eager: big }) : `<span class="emoji" aria-hidden="true">${esc(emoji)}</span>`;
+  return `<span class="media${has ? " has-img" : ""}${big ? " media-big" : ""}">${inner}</span>`;
+}
+
+/** Sepet, özet ve takip satırlarındaki küçük görsel (ürün artık satışta değilse emoji) */
+export function thumb(productId, name = "") {
+  const p = S.byId.get(Number(productId));
+  if (p) return `<span class="thumb">${media(p)}</span>`;
+  return `<span class="thumb"><span class="media"><span class="emoji" aria-hidden="true">🛒</span></span></span>`;
+}
+
+function catVisual(c, cls = "cat-vis") {
+  const has = okImg(c.image);
+  return `<span class="${cls}${has ? " has-img" : ""}">${has ? imgTag(c.image, c.emoji || "🛒", { size: 240 }) : `<span class="emoji" aria-hidden="true">${esc(c.emoji || "🛒")}</span>`}</span>`;
 }
 
 export function priceHtml(p) {
@@ -71,88 +91,8 @@ export function refreshQty(id) {
   }
 }
 
-// ---------- Saat şeridi (Türkiye saati) ----------
-const TZ = "Europe/Istanbul";
-const DAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
-let clockOffset = 0; // sunucu saati - cihaz saati
-export function syncClock(serverIso) {
-  const t = Date.parse(serverIso);
-  if (Number.isFinite(t)) clockOffset = t - Date.now();
-}
-export function nowTR() {
-  const d = new Date(Date.now() + clockOffset);
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
-      .formatToParts(d)
-      .map((x) => [x.type, x.value]),
-  );
-  return { day: DAY_INDEX[parts.weekday] ?? 0, min: Number(parts.hour) * 60 + Number(parts.minute) };
-}
-const toMin = (hhmm) => {
-  const [h, m] = String(hhmm || "0:0").split(":").map(Number);
-  return h * 60 + m;
-};
-const hhmm = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-
-/** Gün 06:00'da başlar; açık aralığı ve "şimdi" konumunu 06:00→06:00 şeridine yerleştirir */
-function nightStrip() {
-  const days = S.store?.hours?.days;
-  if (!days || days.length !== 7) return "";
-  const st = status();
-  const START = 6 * 60;
-  const now = nowTR();
-  let day = now.day;
-  let rel = now.min - START;
-  if (rel < 0) {
-    rel += 1440;
-    day = (day + 6) % 7;
-  }
-  const d = days[day];
-  let seg = null;
-  if (st.alwaysOpen) seg = [0, 1440];
-  else if (d && !d.closed) {
-    let o = toMin(d.open) - START;
-    let c = toMin(d.close) - START;
-    if (o < 0) o += 1440;
-    if (c <= o) c += 1440;
-    if (toMin(d.open) === toMin(d.close)) c = o + 1440;
-    seg = [o, Math.min(c, 1440)];
-  }
-  const pct = (m) => `${((m / 1440) * 100).toFixed(2)}%`;
-  const ticks = [0, 360, 720, 1080, 1440]
-    .map((m) => `<span class="strip-tick" style="left:${pct(m)}">${hhmm(m + START)}</span>`)
-    .join("");
-  const segHtml = seg
-    ? `<span class="strip-open" style="left:${pct(seg[0])};width:${pct(seg[1] - seg[0])}"></span>`
-    : "";
-  // Gece yarısından sonra şerit önceki günün aralığını gösterir; "Bugün" yerine gün adı yazılır
-  // (yoksa "Bugün 14:00–00:10" ile "bugün 14:00'te açılır" mesajı çelişiyordu)
-  const dayWord = day === now.day ? "Bugün" : ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"][day];
-  const segLabel = seg && !st.alwaysOpen ? `${dayWord} sipariş saatleri ${hhmm(seg[0] + START)}–${hhmm(seg[1] + START)}` : st.alwaysOpen ? "7/24 açık" : `${dayWord} kapalı`;
-  return `<figure class="strip" aria-label="${esc(segLabel)}. Şu an saat ${hhmm(now.min)}.">
-    <div class="strip-track" aria-hidden="true">${segHtml}
-      <span class="strip-now${st.isOpen ? " is-open" : ""}" style="left:${pct(rel)}">${icon("moon")}<span class="strip-now-label">${hhmm(now.min)}</span></span>
-    </div>
-    <div class="strip-ticks" aria-hidden="true">${ticks}</div>
-    <figcaption class="strip-caption">${esc(segLabel)}</figcaption>
-  </figure>`;
-}
-
-// ---------- Ana sayfa ----------
-function heroActions(st) {
-  const info = storeInfo();
-  if (st.acceptingOrders) {
-    return `<a class="btn btn-primary btn-lg" href="#/kategoriler">Alışverişe başla</a>
-      ${info.phone ? `<a class="btn btn-night btn-lg" href="${esc(telHref(info.phone))}">${icon("phone")}Telefonla sipariş</a>` : ""}`;
-  }
-  return `<a class="btn btn-primary btn-lg" href="#/kategoriler">Ürünlere göz at</a>
-    ${info.phone ? `<a class="btn btn-night btn-lg" href="${esc(telHref(info.phone))}">${icon("phone")}Ara</a>` : ""}
-    ${info.whatsapp ? `<a class="btn btn-night btn-lg" href="${esc(waHref(info.whatsapp))}" target="_blank" rel="noopener">${icon("chat")}WhatsApp</a>` : ""}`;
-}
-
-export function heroHtml() {
-  const st = status();
-  const info = storeInfo();
+// ---------- Karşılama ----------
+function heroFacts() {
   const o = S.store.ordering || {};
   const facts = [];
   if (o.minOrder) facts.push(`En az ${tl(o.minOrder)} sipariş`);
@@ -162,22 +102,34 @@ export function heroHtml() {
   else if (zs.length && free === zs.length) facts.push("Teslimat ücretsiz");
   else if (free) facts.push(`${free} bölgede teslimat ücretsiz`);
   const pay = [o.payments?.nakit && "nakit", o.payments?.kart && "kart"].filter(Boolean).join(" ya da ");
-  if (pay) facts.push(`Kapıda ${pay}`);
-  let note = "";
-  if (!st.acceptingOrders) note = `<p class="hero-note" data-state="${esc(st.state)}">${icon("clock")}<span>${esc(st.message)}</span></p>`;
-  else if (st.preorder) note = `<p class="hero-note" data-state="onsiparis">${icon("clock")}<span>${esc(st.message || "Şu an kapalıyız; ön sipariş verebilirsiniz.")}</span></p>`;
-  return `<section class="hero night" aria-labelledby="heroTitle">
+  if (pay) facts.push(`Kapıda ${pay} ile ödeme`);
+  return facts;
+}
+
+export function heroHtml() {
+  const st = status();
+  const info = storeInfo();
+  const where = [info.district === "Merkez" ? "" : info.district, info.city].filter(Boolean).join(", ") || "Edirne";
+  const facts = heroFacts();
+  const primary = st.acceptingOrders ? "Alışverişe başla" : "Ürünlere göz at";
+  return `<section class="hero" aria-labelledby="heroTitle" data-accepting="${st.acceptingOrders ? "acik" : "kapali"}">
     <div class="hero-inner">
       <div class="hero-copy">
-        <p class="hero-where">${icon("pin")}<span><strong>${esc(info.name)}</strong>, ${esc([info.district, info.city].filter(Boolean).join("/") || "Edirne")}</span></p>
+        <div class="hero-brand">
+          <img class="hero-logo" src="/img/logo-240.webp" alt="${esc(info.name || "Ulusoy Market")} logosu" width="120" height="120" fetchpriority="high">
+          <p class="hero-name"><strong>${esc(info.name || "")}</strong><span>${esc(where)}</span></p>
+        </div>
         <h1 class="hero-title" id="heroTitle">${esc(info.slogan || info.name)}</h1>
-        <p class="hero-lead">Mahalledeki marketiniz telefonunuzda. Sepeti doldurun, kapıda ödeyin; siparişinizin hangi aşamada olduğunu buradan izleyin.</p>
-        ${note}
-        <div class="hero-actions">${heroActions(st)}</div>
+        <p class="hero-lead">Sepeti doldurun, adresi yazın; siparişiniz kapınıza gelsin. Hangi aşamada olduğunu bu sayfadan izlersiniz.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary btn-lg" href="#/kategoriler">${primary}</a>
+          ${info.whatsapp ? `<a class="btn btn-night btn-lg" href="${esc(waHref(info.whatsapp, "Merhaba, sipariş vermek istiyorum."))}" target="_blank" rel="noopener">${icon("wa")}WhatsApp</a>` : ""}
+          ${info.phone ? `<a class="btn btn-night btn-lg" href="${esc(telHref(info.phone))}">${icon("phone")}<span>Ara<span class="hide-sm"> · ${esc(info.phone)}</span></span></a>` : ""}
+        </div>
       </div>
       <div class="hero-side">
-        ${nightStrip()}
-        ${facts.length ? `<ul class="hero-facts">${facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+        ${gaugeHtml(st)}
+        ${facts.length ? `<ul class="hero-facts">${facts.map((f) => `<li>${icon("check")}${esc(f)}</li>`).join("")}</ul>` : ""}
       </div>
     </div>
   </section>`;
@@ -196,16 +148,10 @@ function rail(title, list, moreHref, id, anchor = "") {
 
 function categoryGrid() {
   return `<section class="section" id="reyonlar" aria-labelledby="catTitle">
-    <div class="section-head"><h2 class="section-title" id="catTitle">Reyonlar</h2></div>
+    <div class="section-head"><h2 class="section-title" id="catTitle">Reyonlar</h2><a class="link-more" href="#/kategoriler">Tüm ürünler</a></div>
     <ul class="cat-grid">
       ${S.categories
-        .map((c) => {
-          const cat = S.catById.get(c.id);
-          const vis = c.image
-            ? `<img src="${esc(c.image)}" alt="" loading="lazy">`
-            : `<span class="emoji" aria-hidden="true">${esc(c.emoji || "🛒")}</span>`;
-          return `<li><a class="cat-tile" href="#/kategori/${c.id}"><span class="cat-vis ${c.image ? "has-img" : `tint-${cat.tint}`}">${vis}</span><span class="cat-name">${esc(c.name)}</span><span class="cat-count">${c.productCount} ürün</span></a></li>`;
-        })
+        .map((c) => `<li><a class="cat-tile" href="#/kategori/${c.id}">${catVisual(c)}<span class="cat-text"><span class="cat-name">${esc(c.name)}</span><span class="cat-count">${c.productCount} ürün</span></span></a></li>`)
         .join("")}
     </ul>
   </section>`;
@@ -214,16 +160,21 @@ function categoryGrid() {
 function bannersHtml() {
   const list = S.store.banners || [];
   if (!list.length) return "";
-  return `<section class="section banners" aria-label="Kampanyalar">
-    <div class="banner-row">
+  return `<section class="section banners" aria-label="Duyurular ve kampanyalar">
+    <div class="banner-row${list.length === 1 ? " is-single" : ""}">
       ${list
         .map((b) => {
           const tag = b.link ? "a" : "div";
           const ext = /^https?:/i.test(b.link || "");
           const attrs = b.link ? ` href="${esc(b.link)}"${ext ? ' target="_blank" rel="noopener"' : ""}` : "";
-          return `<${tag} class="banner${b.image ? " has-img" : ""}"${attrs}>
-            ${b.image ? `<img class="banner-img" src="${esc(b.image)}" alt="" loading="lazy">` : `<span class="banner-moon" aria-hidden="true"></span>`}
-            <span class="banner-text">${b.title ? `<strong class="banner-title">${esc(b.title)}</strong>` : ""}${b.text ? `<span class="banner-body">${esc(b.text)}</span>` : ""}</span>
+          const img = okImg(b.image);
+          return `<${tag} class="banner${img ? " has-img" : ""}${b.link ? " is-link" : ""}"${attrs}>
+            ${img ? `<span class="banner-media"><img class="banner-img" src="${esc(b.image)}" alt="" width="800" height="350" loading="lazy" decoding="async" data-fallback=""></span>` : ""}
+            <span class="banner-text">
+              ${b.title ? `<strong class="banner-title">${esc(b.title)}</strong>` : ""}
+              ${b.text ? `<span class="banner-body">${esc(b.text)}</span>` : ""}
+              ${b.link ? `<span class="banner-go">${ext ? "Ayrıntılar" : "Göz at"}${icon("right")}</span>` : ""}
+            </span>
           </${tag}>`;
         })
         .join("")}
@@ -293,7 +244,7 @@ function shopInfoHtml() {
         <p class="shop-hours">${icon("clock")}<span>${hoursList()}</span></p>
         <p class="shop-contact">
           ${i.phone ? `<a class="btn btn-ghost" href="${esc(telHref(i.phone))}">${icon("phone")}${esc(i.phone)}</a>` : ""}
-          ${i.whatsapp ? `<a class="btn btn-ghost" href="${esc(waHref(i.whatsapp))}" target="_blank" rel="noopener">${icon("chat")}WhatsApp</a>` : ""}
+          ${i.whatsapp ? `<a class="btn btn-ghost" href="${esc(waHref(i.whatsapp))}" target="_blank" rel="noopener">${icon("wa")}WhatsApp</a>` : ""}
         </p>
       </div>
     </div>
@@ -394,7 +345,7 @@ export function catalogView(r) {
     `<a class="tab" href="#/kategoriler${qs({ q: null })}"${!cat && !r.favs && !r.q ? ' aria-current="page"' : ""}>Tümü</a>`,
     S.favs.size ? `<a class="tab" href="#/favoriler"${r.favs ? ' aria-current="page"' : ""}>${icon("heart")}Favoriler</a>` : "",
     ...S.categories.map(
-      (c) => `<a class="tab" href="#/kategori/${c.id}${qs({ q: null })}"${cat && cat.id === c.id ? ' aria-current="page"' : ""}><span aria-hidden="true">${esc(c.emoji)}</span>${esc(c.name)}</a>`,
+      (c) => `<a class="tab" href="#/kategori/${c.id}${qs({ q: null })}"${cat && cat.id === c.id ? ' aria-current="page"' : ""}>${c.emoji ? `<span class="tab-emoji" aria-hidden="true">${esc(c.emoji)}</span>` : ""}${esc(c.name)}</a>`,
     ),
   ].join("");
 

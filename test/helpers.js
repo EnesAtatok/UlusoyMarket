@@ -7,6 +7,8 @@ const path = require("path");
 const { createApp } = require("../lib/app");
 
 const ADMIN_PASSWORD = "test1234";
+// Sipariş formundaki zorunlu onaylar (eski "kvkk: true" alanı artık kabul edilmez)
+const REQUIRED_CONSENTS = require("../lib/defaults").DEFAULT_CONSENTS.filter((c) => c.required && c.active).map((c) => c.key);
 // Pazartesi 16 Kasım 2026, 21:00 (Türkiye) — varsayılan saatlerle (14:00–02:00) açık
 const OPEN_TIME = "2026-11-16T18:00:00.000Z";
 
@@ -67,10 +69,16 @@ function orderBody(extra = {}) {
     zoneId: 1,
     type: "teslimat",
     payment: "nakit",
-    kvkk: true,
+    consents: REQUIRED_CONSENTS,
     items: [{ productId: 13, qty: 5 }], // Tam Yağlı Süt 1 L, 46,5 ₺ → 232,5 ₺
     ...extra,
   };
 }
 
-module.exports = { start, tmpDir, orderBody, ADMIN_PASSWORD, OPEN_TIME };
+/** Numara + telefonla sorguyu açar (varsayılan kapalı) */
+async function enablePhoneLookup(s) {
+  const r = await s.req("PATCH", "/api/admin/settings", { privacy: { phoneLookup: true } }, await s.login());
+  if (r.status !== 200) throw new Error(`Ayar kaydedilemedi: ${r.text}`);
+}
+
+module.exports = { start, tmpDir, orderBody, enablePhoneLookup, ADMIN_PASSWORD, OPEN_TIME, REQUIRED_CONSENTS };

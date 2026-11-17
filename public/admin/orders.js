@@ -3,8 +3,9 @@
 import {
   state, $, $$, esc, icon, h, api, tl, toast, toastErr, isAdmin, bulkResult, openModal, confirmDialog, openMenu,
   showBulk, hideBulk, fmtTime, fmtDateTime, ago, minutesSince, dayStr, addDays, fold, debounce, waNumber, fmtPhone,
-  download, setDirty, readLS, writeLS, loadCatalog, nav, parseNum, ACTIVE, isSoldOut,
+  download, setDirty, readLS, writeLS, loadCatalog, nav, parseNum, ACTIVE, isSoldOut, openAuthed, CAYMA,
 } from "./core.js";
+import { onLive, startLive, stopLive, liveState } from "./live.js";
 
 // ---------- Etiketler ----------
 const TABS = [["aktif", "Aktif"], ["Yeni", "Yeni"], ["Hazırlanıyor", "Hazırlanıyor"], ["Yolda", "Yolda"], ["Teslim edildi", "Teslim edildi"], ["İptal", "İptal"], ["", "Tümü"]];
@@ -20,6 +21,13 @@ function nextStep(o) {
   return null;
 }
 const payLabel = (o) => (o.payment === "kart" ? "Kapıda kart" : "Kapıda nakit");
+const CHANNEL = { telefon: "Telefon araması", whatsapp: "WhatsApp", sms: "SMS" };
+const RR_STATUS = ["Yeni", "İnceleniyor", "Sonuçlandı", "Reddedildi"];
+const RR_BADGE = { Yeni: "b-new", İnceleniyor: "b-info", Sonuçlandı: "b-ok", Reddedildi: "b-muted" };
+const openReturns = (o) => (o.returnRequests || []).filter((r) => r.status === "Yeni" || r.status === "İnceleniyor").length;
+// Web siparişinde ikinci kanaldan teyit (E-ticaret Yön. m.9/1) henüz kaydedilmediyse
+const needsConfirm = (o) => o.source === "web" && ["Yeni", "Hazırlanıyor"].includes(o.status) && !(o.confirmations || []).length;
+const isMasked = (o) => !!o.masked;
 const shortName = (n) => { const p = String(n || "").trim().split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : p[0] || ""; };
 const itemCount = (o) => o.items.reduce((t, i) => t + i.qty, 0);
 
@@ -111,12 +119,17 @@ function setNavCount(n) {
   $$("[data-new-count]").forEach((el) => { el.hidden = !n; el.textContent = n; });
 }
 
-// ---------- Yoklama ----------
+// ---------- Canlı akış (SSE) + yedek yoklama ----------
+// Akış açıkken her olay hemen bir "since" yoklamasını tetikler (liste, sayaçlar ve açık ayrıntı tek yerden ve
+// yöneticiye maskesiz güncellenir). Akış yokken 12 sn'de bir, akış açıkken güvenlik için 60 sn'de bir yoklanır.
 let pollTimer = null;
 let since = null;
 let latestId = 0;
 let polling = false;
+let pollAgain = false;
+let ticks = 0;
 const announced = new Set();
+const annKey = (o) => `${o.id}|${o.createdAt}`;
 export async function startPolling() {
   stopPolling();
   try {
@@ -125,11 +138,17 @@ export async function startPolling() {
     latestId = r.latestId;
     setNavCount(r.counts.Yeni);
   } catch { return; }
-  pollTimer = setInterval(poll, 12000);
+  pollTimer = setInterval(() => {
+    ticks++;
+    if (liveState() !== "live" || ticks % 5 === 0) poll();
+  }, 12000);
+  startLive();
 }
-export function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
+export function stopPolling() { clearInterval(pollTimer); pollTimer = null; stopLive(); }
+const pollSoon = debounce(() => poll(), 120);
 async function poll() {
-  if (polling || !state.user || !since) return;
+  if (!state.user || !since) return;
+  if (polling) { pollAgain = true; return; }
   polling = true;
   try {
     const r = await api(`/api/admin/orders?since=${encodeURIComponent(since)}`);
@@ -137,14 +156,59 @@ async function poll() {
     since = r.serverTime;
     setNavCount(r.counts.Yeni);
     // Yeni sipariş: önceki yoklamadan sonra oluşturulan ya da numarası daha büyük olan (silinen numaralar yeniden kullanılabilir)
-    const fresh = r.orders.filter((o) => (Date.parse(o.createdAt) > prevSince || o.id > latestId) && o.source !== "panel" && !announced.has(o.token)).sort((a, b) => a.id - b.id);
-    fresh.forEach((o) => announced.add(o.token));
+    const fresh = r.orders.filter((o) => (Date.parse(o.createdAt) > prevSince || o.id > latestId) && o.source !== "panel" && !announced.has(annKey(o))).sort((a, b) => a.id - b.id);
+    fresh.forEach((o) => announced.add(annKey(o)));
     latestId = Math.max(latestId, r.latestId);
     if (fresh.length) announce(fresh);
-    if (r.orders.length) document.dispatchEvent(new CustomEvent("orderschanged", { detail: { orders: r.orders, fresh: fresh.map((o) => o.id) } }));
+    if (r.orders.length) document.dispatchEvent(new CustomEvent("orderschanged", { detail: { orders: r.orders, fresh: fresh.map((o) => o.id), counts: r.counts } }));
   } catch { /* ağ hatası: bir sonraki turda tekrar dener */ }
-  finally { polling = false; }
+  finally {
+    polling = false;
+    if (pollAgain) { pollAgain = false; pollSoon(); }
+  }
 }
+async function refreshCounts() {
+  try {
+    const r = await api("/api/admin/orders?pageSize=1");
+    setNavCount(r.counts.Yeni);
+    latestId = Math.max(latestId, r.latestId);
+    document.dispatchEvent(new CustomEvent("ordersreload"));
+  } catch { /* sessiz */ }
+}
+
+// Aynı anda gelen birden çok sipariş tek uyarıda toplanır (tek ses, tek bildirim)
+let pendingNew = [];
+const flushNew = debounce(() => {
+  const list = pendingNew.sort((a, b) => a.id - b.id);
+  pendingNew = [];
+  if (!list.length) return;
+  announce(list);
+  // Bu siparişler yoklamada "yeni" diye ikinci kez duyurulmaz ama satırları yine de parlasın
+  setTimeout(() => list.forEach((o) => { const row = $(`.order-row[data-id="${o.id}"]`); if (row) row.classList.add("flash"); }), 700);
+}, 250);
+onLive("siparis.yeni", (o) => {
+  // Ses ve bildirim olay gelir gelmez; liste/sayaç ardından gelen yoklamayla
+  if (o && o.id && o.source !== "panel" && !announced.has(annKey(o))) {
+    announced.add(annKey(o));
+    latestId = Math.max(latestId, o.id);
+    pendingNew.push(o);
+    flushNew();
+  }
+  pollSoon();
+});
+onLive("siparis.guncellendi", () => pollSoon());
+onLive("siparis.silindi", (d) => {
+  const ids = (d && d.ids) || [];
+  document.dispatchEvent(new CustomEvent("ordersdeleted", { detail: ids }));
+  refreshCounts();
+});
+onLive("durum", (d) => { if (d && d.status) document.dispatchEvent(new CustomEvent("storestatus", { detail: d.status })); });
+onLive("yenile", () => { pollSoon(); refreshCounts(); });
+onLive("connected", (d) => {
+  if (d && d.status) document.dispatchEvent(new CustomEvent("storestatus", { detail: d.status }));
+  pollSoon(); // kopukken kaçanlar
+  if (d && d.restarted) refreshCounts();
+});
 function announce(list) {
   const onOrders = nav.current && nav.current() === ordersPage;
   if (!(onOrders && document.visibilityState === "visible" && document.hasFocus())) setUnseen(unseen + list.length);
@@ -156,7 +220,7 @@ function announce(list) {
     try {
       const n = new Notification(list.length > 1 ? `${list.length} yeni sipariş` : `Yeni sipariş #${o.id}`, {
         body: `${o.customer.name} · ${o.type === "gelal" ? "Gel-al" : o.customer.zoneName || "Eve teslim"} · ${tl(o.total)}`,
-        icon: "/img/logo.webp", tag: `siparis-${o.id}`,
+        icon: "/img/icon-192.png", tag: `siparis-${o.id}`,
       });
       n.onclick = () => { window.focus(); nav.go(`/panel/siparisler/${o.id}`); n.close(); };
     } catch { /* bazı mobil tarayıcılar yalnızca service worker ile bildirim gösterir */ }
@@ -351,6 +415,18 @@ document.addEventListener("orderschanged", (e) => {
     else toast(`#${o.id} başka bir yerde güncellendi. Kaydetmeden önce kontrol edin.`, "warn");
   }
 });
+document.addEventListener("ordersreload", () => {
+  if (!(nav.current && nav.current() === ordersPage) || !$("#oList")) return;
+  loadList({ silent: true });
+  if (os.openId && !os.editing && !notesDirty()) refreshDetail(true);
+});
+document.addEventListener("ordersdeleted", (e) => {
+  if (!(nav.current && nav.current() === ordersPage) || !$("#oList")) return;
+  const ids = e.detail || [];
+  if (os.openId && ids.includes(os.openId)) { toast(`#${os.openId} silindi.`, "warn"); closeDetail(); }
+  ids.forEach((id) => os.sel.delete(id));
+  loadList({ silent: true });
+});
 
 function renderTabs() {
   const el = $("#oTabs");
@@ -372,7 +448,7 @@ function rowHtml(o) {
   return `<div class="order-row ${sel ? "is-selected" : ""} ${os.openId === o.id ? "is-open" : ""}" data-id="${o.id}" data-status="${esc(o.status)}">
     <label class="cb-cell"><input type="checkbox" class="cb" data-sel="${o.id}" ${sel ? "checked" : ""} aria-label="#${o.id} seç"></label>
     <button type="button" class="order-main" data-open="${o.id}" aria-label="Sipariş #${o.id} ayrıntısı">
-      <span class="order-line1"><span class="order-id">#${o.id}</span>${badge(o)}${o.preorder ? `<span class="badge b-warn">Ön sipariş</span>` : ""}${o.source === "panel" ? `<span class="badge b-outline">Telefon</span>` : ""}
+      <span class="order-line1"><span class="order-id">#${o.id}</span>${badge(o)}${o.preorder ? `<span class="badge b-warn">Ön sipariş</span>` : ""}${o.source === "panel" ? `<span class="badge b-outline">Telefon</span>` : ""}${openReturns(o) ? `<span class="badge b-danger">${icon("undo")} İade talebi</span>` : ""}${o.masked || o.archived ? `<span class="badge b-muted">${icon("lock")} Arşiv</span>` : ""}
         <span class="order-name">${esc(o.customer.name)}</span><span class="order-total">${tl(o.total)}</span></span>
       <span class="order-line2">
         <span class="${hot ? "age-hot" : ""}">${icon("clock")} ${fmtTime(o.createdAt)} · ${ago(o.createdAt)}</span>
@@ -381,6 +457,7 @@ function rowHtml(o) {
         <span>${itemCount(o)} ürün</span>
         ${o.note ? `<span title="${esc(o.note)}">${icon("message")} Not</span>` : ""}
         ${o.courier ? `<span>${icon("user")} ${esc(o.courier)}</span>` : ""}
+        ${needsConfirm(o) ? `<span class="teyit-hint">${icon("phone")} Teyit bekliyor</span>` : ""}
       </span>
     </button>
     ${nx ? `<div class="order-act"><button type="button" class="btn ${o.status === "Yeni" ? "btn-accent" : ""}" data-next="${o.id}">${esc(nx.label)} ${icon("arrow-right", "i-sm")}</button></div>` : ""}
@@ -572,9 +649,9 @@ async function openDetail(id, push = true) {
     if (!cached) closeDetail();
   }
 }
-async function refreshDetail() {
+async function refreshDetail(silent = false) {
   if (!os.openId) return;
-  try { os.detail = await api(`/api/admin/orders/${os.openId}`); renderDetail(); } catch (e) { toastErr(e); }
+  try { os.detail = await api(`/api/admin/orders/${os.openId}`); renderDetail(); } catch (e) { if (!silent) toastErr(e); }
 }
 function closeDetail(pushUrl = true) {
   os.openId = null; os.detail = null; os.editing = null;
@@ -625,7 +702,8 @@ function renderDetail() {
       <div class="detail-sec">
         <div class="small muted">${fmtDateTime(o.createdAt)} · ${ago(o.createdAt)} · ${o.source === "panel" ? "Panelden girildi" : "Online sipariş"}</div>
       </div>
-      ${cancelled ? `<div class="callout danger cancelled-banner"><div>${icon("ban")} <b>İptal edildi</b> ${o.cancelledBy === "musteri" ? "(müşteri iptal etti)" : "(market iptal etti)"}${o.cancelNote ? `<div class="mt" style="margin-top:4px">Müşteriye not: ${esc(o.cancelNote)}</div>` : ""}</div>
+      ${isMasked(o) ? `<div class="detail-sec"><div class="callout">${icon("lock")}<div><b>${esc(statusText(o, o.status))}</b> · Arşivlenmiş siparişin durumunu, kalemlerini ve notlarını yalnızca yönetici değiştirebilir.</div></div></div>`
+      : cancelled ? `<div class="callout danger cancelled-banner"><div>${icon("ban")} <b>İptal edildi</b> ${o.cancelledBy === "musteri" ? "(müşteri iptal etti)" : "(market iptal etti)"}${o.cancelNote ? `<div class="mt" style="margin-top:4px">Müşteriye not: ${esc(o.cancelNote)}</div>` : ""}</div>
           <div class="row-flex"><button type="button" class="btn btn-sm" data-dcnote>${icon("edit", "i-sm")} ${o.cancelNote ? "Notu düzenle" : "Not ekle"}</button><button type="button" class="btn btn-sm" data-dreopen>İptali geri al</button></div></div>`
       : `<div class="detail-sec">
           <div class="stepper" role="group" aria-label="Durum">${FLOW.map((s, i) => `<button type="button" class="step ${i < stepIdx ? "done" : ""} ${i === stepIdx ? "current" : ""}" data-dstatus="${s}" ${i === stepIdx ? 'aria-current="step"' : ""}>${esc(statusText(o, s))}</button>`).join("")}</div>
@@ -634,17 +712,24 @@ function renderDetail() {
 
       <div class="detail-sec">
         <h4>Müşteri</h4>
+        ${isMasked(o) ? `<div class="callout mb">${icon("lock")}<div><b>Arşivlenmiş sipariş.</b> Saklama kuralı gereği müşterinin adı, telefonu, adresi ve notları yalnızca yöneticiye görünür. Arama ve mesaj düğmeleri kapalıdır.</div></div>`
+          : o.archived ? `<div class="callout mb">${icon("lock")}<div>Arşivlenmiş sipariş: kişisel veriler personele maskeli görünür, siz yönetici olarak görüyorsunuz.</div></div>` : ""}
         <dl class="kv">
           <dt>Ad</dt><dd>${esc(c.name)}</dd>
-          <dt>Telefon</dt><dd><a href="tel:${esc(c.phone)}">${esc(fmtPhone(c.phone))}</a></dd>
-          ${o.type === "gelal" ? `<dt>Teslimat</dt><dd>${icon("bag", "i-sm")} Gel-al (mağazadan)</dd>` : `<dt>Bölge</dt><dd>${esc(c.zoneName || "—")}</dd><dt>Adres</dt><dd style="white-space:pre-line">${esc(c.address)}</dd>`}
+          <dt>Telefon</dt><dd>${isMasked(o) || !c.phone ? `<span class="muted">${isMasked(o) ? "Gizli" : "—"}</span>` : `<a href="tel:${esc(c.phone)}">${esc(fmtPhone(c.phone))}</a>`}</dd>
+          ${o.type === "gelal" ? `<dt>Teslimat</dt><dd>${icon("bag", "i-sm")} Gel-al (mağazadan)</dd>` : `<dt>Bölge</dt><dd>${esc(c.zoneName || "—")}</dd><dt>Adres</dt><dd style="white-space:pre-line">${isMasked(o) ? `<span class="muted">Gizli</span>` : esc(c.address)}</dd>`}
         </dl>
         <div class="contact-btns">
-          <a class="btn" href="tel:${esc(c.phone)}">${icon("phone")} Ara</a>
+          ${isMasked(o) || !c.phone
+            ? `<button type="button" class="btn is-off" disabled aria-disabled="true" title="Arşivlenmiş siparişte kapalı">${icon("phone")} Ara</button><button type="button" class="btn is-off" disabled aria-disabled="true" title="Arşivlenmiş siparişte kapalı">${icon("message")} WhatsApp</button><button type="button" class="btn is-off" disabled aria-disabled="true">${icon(o.type !== "gelal" ? "pin" : "user")} ${o.type !== "gelal" ? "Harita" : "Geçmiş"}</button>`
+            : `<a class="btn" href="tel:${esc(c.phone)}">${icon("phone")} Ara</a>
           <button type="button" class="btn" data-dwa>${icon("message")} WhatsApp</button>
-          ${o.type !== "gelal" && c.address ? `<a class="btn" href="https://www.google.com/maps/search/?api=1&query=${mapsQ}" target="_blank" rel="noopener">${icon("pin")} Harita</a>` : `<a class="btn" data-link href="/panel/musteriler/${esc(c.phone)}">${icon("user")} Geçmiş</a>`}
+          ${o.type !== "gelal" && c.address ? `<a class="btn" href="https://www.google.com/maps/search/?api=1&query=${mapsQ}" target="_blank" rel="noopener">${icon("pin")} Harita</a>` : `<a class="btn" data-link href="/panel/musteriler/${esc(c.phone)}">${icon("user")} Geçmiş</a>`}`}
         </div>
       </div>
+
+      ${confirmHtml(o)}
+      ${returnsHtml(o)}
 
       <div class="detail-sec">
         <h4>Ödeme ve tercihler</h4>
@@ -675,7 +760,8 @@ function renderDetail() {
           return `<li class="${isStatus && !x.note ? "st" : ""}"><div><b>${x.note && (!prev || prev.status === x.status) ? "Not" : esc(statusText(o, x.status))}</b>${x.by ? ` <span class="muted">· ${esc(x.by === "musteri" ? "müşteri" : x.by)}</span>` : ""}${x.note ? `<div>${esc(x.note)}</div>` : ""}<div class="when">${fmtDateTime(x.at)}</div></div></li>`;
         }).join("")}</ol>
       </div>
-      ${!cancelled ? `<div class="detail-sec"><button type="button" class="btn btn-danger-ghost btn-block" data-dcancel>${icon("ban")} Siparişi iptal et</button></div>` : ""}
+      ${consentHtml(o)}
+      ${!cancelled ?`<div class="detail-sec"><button type="button" class="btn btn-danger-ghost btn-block" data-dcancel>${icon("ban")} Siparişi iptal et</button></div>` : ""}
     </div>
   </aside>`;
   const body = slot.querySelector(".detail-body");
@@ -683,9 +769,98 @@ function renderDetail() {
   bindDetail(slot, o);
 }
 
+// ---------- Sipariş teyidi, cayma/iade talepleri, onay kaydı ----------
+function confirmHtml(o) {
+  const list = (o.confirmations || []).slice().reverse();
+  const active = ACTIVE.includes(o.status);
+  const canAct = !isMasked(o) && active;
+  if (!list.length && !canAct) return "";
+  const waiting = !list.length && o.source === "web";
+  return `<div class="detail-sec">
+    <h4>Sipariş teyidi ${list.length ? `<span class="badge b-ok">${icon("check")} Kaydedildi</span>` : waiting ? `<span class="badge b-warn">Bekliyor</span>` : ""}</h4>
+    ${waiting ? `<p class="small" style="margin:0 0 8px">Müşteriyi kısaca arayıp siparişin alındığını bildirin ve buraya işaretleyin (E-ticaret Yönetmeliği m.9: siparişin ikinci bir kanaldan teyidi).</p>` : ""}
+    ${list.length ? `<div class="mini-list">${list.map((x) => `<div class="mini-row">${icon(x.result === "ulasilamadi" ? "x" : "check", "i-sm")}<b>${esc(CHANNEL[x.channel] || x.channel)}</b><span>${x.result === "ulasilamadi" ? "ulaşılamadı" : "ulaşıldı, teyit edildi"}</span>${x.note ? `<span class="muted">· ${esc(x.note)}</span>` : ""}<span class="when">${esc(x.by || "")} · ${fmtDateTime(x.at)}</span></div>`).join("")}</div>` : ""}
+    ${canAct ? `<div class="row-flex mt"><button type="button" class="btn btn-sm" data-dconfirm="ulasildi">${icon("check", "i-sm")} Teyit araması yapıldı</button><button type="button" class="btn btn-sm" data-dconfirm="ulasilamadi">${icon("x", "i-sm")} Ulaşılamadı</button></div>` : ""}
+  </div>`;
+}
+function returnsHtml(o) {
+  const list = o.returnRequests || [];
+  if (!list.length) return "";
+  const nm = (pid) => { const it = o.items.find((i) => i.productId === pid); return it ? it.name : `Ürün #${pid}`; };
+  return `<div class="detail-sec">
+    <h4>Cayma / iade talepleri (${list.length})</h4>
+    <div class="mini-list">${list.slice().reverse().map((r) => `<div class="rr-card ${r.status === "Yeni" ? "is-new" : ""}">
+      <div class="row-flex"><b>Talep ${o.id}-${r.id}</b><span class="badge ${RR_BADGE[r.status] || ""}">${esc(r.status)}</span><span class="grow"></span><button type="button" class="btn btn-sm" data-drr="${r.id}">${icon("edit", "i-sm")} İşle</button></div>
+      <div class="msg">${esc(r.message || "")}</div>
+      ${(r.items || []).length ? `<div class="small">${r.items.map((i) => `${i.qty} × ${esc(nm(i.productId))}`).join(", ")}</div>` : ""}
+      ${r.adminNote ? `<div class="small"><b>Not:</b> ${esc(r.adminNote)}</div>` : ""}
+      <div class="meta"><span>Geldi: ${fmtDateTime(r.at)}</span>${r.updatedAt ? `<span>Son işlem: ${esc(r.by || "")} · ${fmtDateTime(r.updatedAt)}</span>` : ""}</div>
+    </div>`).join("")}</div>
+    <p class="small muted" style="margin:8px 0 0">Talepleri 14 gün içinde sonuçlandırın. Çabuk bozulan ürünlerde cayma hakkı yoktur; ayıplı ürün talebi yine değerlendirilir.</p>
+  </div>`;
+}
+function consentHtml(o) {
+  const c = o.consent;
+  const short = (v) => String(v || "").slice(0, 12);
+  return `<div class="detail-sec">
+    <h4>Onay kaydı ve sözleşme</h4>
+    ${c ? `<div class="consent-log">
+        <div class="small muted">Onay zamanı: <b class="num" style="color:var(--ink)">${fmtDateTime(c.at)}</b>${c.ip ? ` · IP: <span class="ver">${esc(c.ip)}</span>` : ""}</div>
+        ${(c.accepted || []).map((a) => `<div class="c-item">${icon("check-square")}<div>${esc(a.label)}${a.required ? "" : ` <span class="badge b-muted">isteğe bağlı</span>`}
+          <div class="c-docs">${(a.docs || []).map((d) => `${esc(d.title)} <span class="ver" title="Metin sürümü (SHA-256): ${esc(d.version)}">${esc(short(d.version))}</span>`).join(" · ")}</div></div></div>`).join("")}
+        ${(c.declined || []).map((a) => `<div class="c-item no">${icon("x")}<div class="muted">İşaretlenmedi: ${esc(a.label || a.key || "")}</div></div>`).join("")}
+      </div>
+      <div class="row-flex mt"><button type="button" class="btn btn-sm" data-ddoc="open">${icon("file", "i-sm")} Sipariş sözleşmesini aç</button><button type="button" class="btn btn-sm" data-ddoc="print">${icon("printer", "i-sm")} Yazdır</button></div>`
+    : `<p class="small muted" style="margin:0">Bu sipariş için onay kaydı yok (telefonla girilmiş ya da eski bir sipariş).</p>`}
+  </div>`;
+}
+function confirmDialogFor(o, result) {
+  openModal({
+    title: result === "ulasilamadi" ? `#${o.id} · müşteriye ulaşılamadı` : `#${o.id} · teyit kaydı`, size: "narrow",
+    submitLabel: result === "ulasilamadi" ? "Ulaşılamadı olarak kaydet" : "Teyit edildi olarak kaydet",
+    body: `<div class="seg" role="radiogroup" aria-label="Kanal">${Object.entries(CHANNEL).map(([k, l], i) => `<label class="check" style="padding:0 10px"><input type="radio" name="channel" value="${k}" ${i === 0 ? "checked" : ""}> ${l}</label>`).join("")}</div>
+      <label class="field"><span>Not <span class="hint">(isteğe bağlı, kişisel bilgi yazmayın)</span></span><input name="note" maxlength="200" autocomplete="off"></label>
+      <p class="hint" style="margin:0">Kayıt zaman ve kullanıcı adınızla siparişe ve denetim kaydına yazılır.</p>`,
+    onSubmit: async (f) => {
+      const body = { channel: f.querySelector("[name=channel]:checked").value, result };
+      if (f.note.value.trim()) body.note = f.note.value.trim();
+      const n = await api(`/api/admin/orders/${o.id}/confirmation`, { method: "POST", body });
+      replaceOrder(n);
+      renderList(); renderDetail();
+      toast(result === "ulasilamadi" ? `#${o.id}: ulaşılamadı kaydedildi.` : `#${o.id} teyit edildi.`);
+    },
+  });
+}
+function returnDialog(o, rid) {
+  const r = (o.returnRequests || []).find((x) => x.id === rid);
+  if (!r) return;
+  openModal({
+    title: `Talep ${o.id}-${r.id}`, size: "narrow", submitLabel: "Kaydet",
+    body: `<div class="callout">${icon("message")}<div style="white-space:pre-line">${esc(r.message || "")}</div></div>
+      <label class="field"><span>Durum</span><select name="status">${RR_STATUS.map((s) => `<option ${s === r.status ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+      <label class="field"><span>Not <span class="hint">(yalnızca panelde)</span></span><textarea name="note" maxlength="300" rows="3">${esc(r.adminNote || "")}</textarea></label>`,
+    onSubmit: async (f) => {
+      const n = await api(`/api/admin/orders/${o.id}/return-requests/${r.id}`, { method: "PATCH", body: { status: f.status.value, note: f.note.value.trim() } });
+      replaceOrder(n);
+      renderList(); renderDetail();
+      toast(`Talep ${o.id}-${r.id}: ${f.status.value}.`);
+    },
+  });
+}
+function replaceOrder(n) {
+  const i = os.list.findIndex((x) => x.id === n.id);
+  if (i >= 0) os.list[i] = n;
+  if (os.detail && os.detail.id === n.id) os.detail = n;
+}
+async function openDocuments(o, print) {
+  try { await openAuthed(`/api/admin/orders/${o.id}/documents?format=html`, `siparis-${o.id}-sozlesme.html`, { print }); } catch (e) { toastErr(e); }
+}
+
 function itemsHtml(o) {
   if (os.editing) return editItemsHtml(o);
-  return `<h4>Ürünler (${itemCount(o)}) ${o.status !== "İptal" ? `<button type="button" class="btn btn-sm" data-dedit>${icon("edit", "i-sm")} Düzenle</button>` : ""}</h4>
+  // Personel yalnızca hazırlık süren (aktif) siparişin kalemlerini düzenler; teslim edilmiş / arşivlenmiş sipariş yöneticide
+  const canEdit = o.status !== "İptal" && !isMasked(o) && (isAdmin() || ACTIVE.includes(o.status));
+  return `<h4>Ürünler (${itemCount(o)}) ${canEdit ? `<button type="button" class="btn btn-sm" data-dedit>${icon("edit", "i-sm")} Düzenle</button>` : ""}</h4>
     <table class="items-tbl"><tbody>${o.items.map((i) => `<tr><td class="q">${i.qty} ${i.unit === "kg" ? "kg" : "×"}</td><td>${esc(i.name)}<div class="small muted">${tl(i.price)} / ${esc(i.unit)}</div></td><td class="p">${tl(i.price * i.qty)}</td></tr>`).join("")}</tbody></table>
     <div class="totals">
       <div><span>Ara toplam</span><span>${tl(o.subtotal)}</span></div>
@@ -732,12 +907,17 @@ function bindDetail(slot, o) {
     if (t.hasAttribute("data-dmore")) {
       return openMenu(t, [
         { label: "Fiş yazdır", icon: "printer", onClick: () => printReceipts([o]) },
-        { label: "Müşteri geçmişi", icon: "user", onClick: () => nav.go(`/panel/musteriler/${o.customer.phone}`) },
-        { label: "Takip numarasını kopyala", icon: "copy", onClick: () => copyText(`Sipariş no: ${o.id}`) },
+        ...(o.consent ? [{ label: "Sipariş sözleşmesini aç", icon: "file", onClick: () => openDocuments(o, false) }] : []),
+        ...(isMasked(o) || !o.customer.phone ? [] : [{ label: "Müşteri geçmişi", icon: "user", onClick: () => nav.go(`/panel/musteriler/${o.customer.phone}`) }]),
+        ...(o.trackPath ? [{ label: "Gizli takip bağlantısını kopyala", icon: "copy", onClick: () => copyText(location.origin + o.trackPath) }] : []),
+        { label: "Sipariş numarasını kopyala", icon: "copy", onClick: () => copyText(`Sipariş no: ${o.id}`) },
         ...(isAdmin() && ["Teslim edildi", "İptal"].includes(o.status) ? ["-", { label: "Siparişi sil", icon: "trash", danger: true, onClick: () => deleteOne(o) }] : []),
       ]);
     }
     if (t.hasAttribute("data-dwa")) return waMenu(t, o);
+    if (t.dataset.dconfirm) return confirmDialogFor(o, t.dataset.dconfirm);
+    if (t.dataset.drr) return returnDialog(o, Number(t.dataset.drr));
+    if (t.dataset.ddoc) return openDocuments(o, t.dataset.ddoc === "print");
     if (t.hasAttribute("data-dedit")) {
       if (!state.loaded.products) await loadCatalog().catch(() => {});
       os.editing = { lines: o.items.map((i) => ({ ...i, orig: i.qty })) };
@@ -891,9 +1071,26 @@ function cancelDialog(o, isNew) {
 }
 
 // ---------- Fiş (80 mm) ----------
+// Fişle birlikte verilen basılı nüsha (YASAL.md §2.4 yöntem 3): satıcı bilgileri, ürün ürün cayma durumu,
+// sözleşmenin tam metnine bağlantı.
+const CAYMA_SHORT = { yok_cabuk_bozulan: "Cayma yok (çabuk bozulan)", acilirsa_yok_hijyen: "Ambalaj açılırsa cayma yok", var: "Cayma hakkı var (14 gün)" };
+function sellerHtml() {
+  const st = (state.store && state.store.store) || {};
+  const lg = (state.store && state.store.legal) || {};
+  const rows = [
+    lg.companyTitle ? `Satıcı: ${esc(lg.companyTitle)}` : "",
+    lg.taxOffice || lg.taxNo ? `${lg.taxOffice ? `${esc(lg.taxOffice)} V.D.` : "VKN"}${lg.taxNo ? ` ${esc(lg.taxNo)}` : ""}` : "",
+    lg.mersis ? `MERSİS: ${esc(lg.mersis)}` : "",
+    st.address ? esc(st.address) : "",
+    [st.phone ? `Tel: ${esc(st.phone)}` : "", st.email ? esc(st.email) : ""].filter(Boolean).join(" · "),
+    lg.etbisNo ? `ETBİS: ${esc(lg.etbisNo)}` : "",
+  ].filter(Boolean);
+  return rows.length ? `<div class="rc-small">${rows.join("<br>")}</div>` : "";
+}
 export function printReceipts(orders) {
   const s = (state.store && state.store.store) || { name: "Ulusoy Market", phone: "" };
   const line = (a, b) => `<div class="rc-row"><span>${a}</span><span>${b}</span></div>`;
+  const seller = sellerHtml();
   $("#printArea").innerHTML = orders.map((o) => {
     const c = o.customer;
     const changeBack = o.payment === "nakit" && o.changeFor ? Math.max(0, o.changeFor - o.total) : null;
@@ -907,7 +1104,7 @@ export function printReceipts(orders) {
       <p>Tel: ${esc(fmtPhone(c.phone))}</p>
       ${o.type !== "gelal" ? `<p>Bölge: ${esc(c.zoneName || "-")}</p><p style="white-space:pre-line">${esc(c.address)}</p>` : ""}
       <hr class="rc-hr">
-      ${o.items.map((i) => `<div class="rc-item"><span class="q">${i.qty}${i.unit === "kg" ? "kg" : "x"}</span><span>${esc(i.name)}</span><span>${tl(i.price * i.qty)}</span></div>`).join("")}
+      ${o.items.map((i) => `<div class="rc-item"><span class="q">${i.qty}${i.unit === "kg" ? "kg" : "x"}</span><span>${esc(i.name)}</span><span>${tl(i.price * i.qty)}</span></div>${CAYMA_SHORT[i.caymaDurumu] ? `<div class="rc-cay">${CAYMA_SHORT[i.caymaDurumu]}</div>` : ""}`).join("")}
       <hr class="rc-hr">
       ${line("Ara toplam", tl(o.subtotal))}
       ${o.discount ? line(`İndirim${o.couponCode ? ` (${esc(o.couponCode)})` : ""}`, `-${tl(o.discount)}`) : ""}
@@ -920,9 +1117,15 @@ export function printReceipts(orders) {
       ${o.courier ? `<p><b>Kurye:</b> ${esc(o.courier)}</p>` : ""}
       ${o.status === "İptal" ? `<div class="rc-box rc-center">İPTAL EDİLDİ</div>` : ""}
       <hr class="rc-hr">
+      ${seller}
+      <p class="rc-small">Cayma hakkı olan ürünlerde teslimden itibaren 14 gün içinde cayma bildirebilirsiniz; çabuk bozulan ürünlerde cayma hakkı yoktur, ayıplı ürün her zaman değiştirilir. Bu belge mali fiş/fatura yerine geçmez.</p>
+      ${o.consent && o.token ? `<p class="rc-small">Sözleşmeniz ve ön bilgilendirme formu:</p><p class="rc-url">${esc(location.origin)}/siparis/${o.id}/belgeler?t=${esc(o.token)}</p>` : ""}
+      <hr class="rc-hr">
       <div class="rc-center">Teşekkür ederiz!</div>
     </section>`;
   }).join("");
+  // Yazdırınca fiş alanı (müşteri adı, telefon, adres) DOM'da bekletilmez
+  window.addEventListener("afterprint", () => { const pa = $("#printArea"); if (pa) pa.innerHTML = ""; }, { once: true });
   setTimeout(() => window.print(), 50);
 }
 

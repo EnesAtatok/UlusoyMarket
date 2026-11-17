@@ -109,20 +109,67 @@ export async function api(path, { method = "GET", body, raw, contentType, signal
   return data;
 }
 
-/** Yetkili indirme: fetch → Blob → <a download> */
-export async function download(path, fallbackName) {
+/** Yetkili dosya isteği (Bearer başlığıyla); hata JSON'unu ApiError'a çevirir */
+async function fetchFile(path, { method = "GET", body } = {}) {
   let res;
+  const headers = { Authorization: `Bearer ${state.token}` };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
   try {
-    res = await fetch(path, { headers: { Authorization: `Bearer ${state.token}` }, cache: "no-store" });
+    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store" });
   } catch {
     throw new ApiError("Sunucuya ulaşılamadı.", 0, "AG");
   }
   if (res.status === 401) { onUnauthorized("Oturumunuz sona erdi. Lütfen tekrar giriş yapın."); throw new ApiError("Oturumunuz sona erdi.", 401); }
   if (!res.ok) {
     let msg = `İndirme başarısız (${res.status}).`;
-    try { msg = (await res.json()).error || msg; } catch { /* boş */ }
-    throw new ApiError(msg, res.status);
+    let code;
+    try { const j = await res.json(); msg = j.error || msg; code = j.code; } catch { /* boş */ }
+    throw new ApiError(msg, res.status, code);
   }
+  return res;
+}
+
+/** Yetkili sayfayı (ör. sipariş sözleşmesi HTML'i) yeni sekmede açar; açılamazsa indirir */
+export async function openAuthed(path, fallbackName, { print = false } = {}) {
+  // Açılır pencere engellenmesin diye sekme kullanıcı tıklamasıyla hemen açılır, içerik sonra yüklenir
+  const win = window.open("", "_blank");
+  try {
+    const res = await fetchFile(path);
+    let blob = await res.blob();
+    if (/text\/html/i.test(blob.type)) {
+      // blob: adresinde "/style.css" gibi yollar çözülemez; sayfaya kendi kökenimizi taban adres olarak ekle
+      // (<head …> yalnızca; <header> ile karışmasın.) Belge yalnızca metin: içine script çalıştırılmasın diye ek CSP
+      const html = (await blob.text()).replace(/<head(\s[^>]*)?>/i, (m, attrs = "") => `<head${attrs}><meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'"><base href="${location.origin}/">`);
+      blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    }
+    const url = URL.createObjectURL(blob);
+    if (win) {
+      win.location.href = url;
+      if (print) {
+        // Blob adresi aynı kökenden: yüklenince yazdırma penceresini açanın kendisi tetikler (CSP iframe'e izin vermez)
+        let n = 0;
+        const t = setInterval(() => {
+          n++;
+          try {
+            if (win.closed || n > 60) { clearInterval(t); return; }
+            if (win.location.href === url && win.document.readyState === "complete") { clearInterval(t); win.focus(); win.print(); }
+          } catch { /* yükleniyor */ }
+        }, 200);
+      }
+    } else {
+      const a = document.createElement("a");
+      a.href = url; a.download = fallbackName; document.body.append(a); a.click(); a.remove();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  } catch (e) {
+    if (win) win.close();
+    throw e;
+  }
+}
+
+/** Yetkili indirme: fetch → Blob → <a download> (body verilirse POST) */
+export async function download(path, fallbackName, body) {
+  const res = await fetchFile(path, body === undefined ? {} : { method: "POST", body });
   const blob = await res.blob();
   const cd = res.headers.get("Content-Disposition") || "";
   const m = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(cd);
@@ -147,6 +194,13 @@ export async function loadSettings(force = false) {
   return state.settings;
 }
 export const isSoldOut = (p) => !!(p.soldOut || p.stock === 0);
+/** Cayma hakkı durumu (MSY m.15); ürün null ise kategorininki geçerlidir */
+export const CAYMA = { yok_cabuk_bozulan: "Yok – çabuk bozulan", acilirsa_yok_hijyen: "Ambalajı açılırsa yok – hijyen", var: "Var" };
+export const caymaOf = (p) => {
+  if (p && CAYMA[p.caymaDurumu]) return p.caymaDurumu;
+  const c = p && state.categories.find((x) => x.id === p.categoryId);
+  return c && CAYMA[c.caymaDurumu] ? c.caymaDurumu : "var";
+};
 export const catName = (id) => { const c = state.categories.find((x) => x.id === id); return c ? c.name : "—"; };
 
 // ---------- Bildirim (toast) ----------

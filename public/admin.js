@@ -9,20 +9,35 @@ import { customersPage } from "./admin/customers.js";
 import { campaignsPage } from "./admin/campaigns.js";
 import { reportsPage } from "./admin/reports.js";
 import { settingsPage, accountPage } from "./admin/settings.js";
+import { startSecurity, stopSecurity, renderSecBar } from "./admin/security.js";
 
 const PAGES = [ordersPage, productsPage, customersPage, campaignsPage, reportsPage, settingsPage, accountPage];
 let current = null;
 
 // ---------- Oturum ----------
+let started = false; // bu sayfa yüklemesinde bir oturumla panel açıldı mı
+// Çıkışta / oturum düşünce önceki kullanıcının ekranda kalan verisi (maskesiz siparişler, fiş yazdırma alanı, açık
+// pencereler) ve modüllerdeki önbellek bir sonraki girişe taşınmasın: sayfa baştan yüklenir (DOM ve JS durumu sıfırlanır).
 function showLogin(notice) {
+  if (started) {
+    started = false;
+    writeLS("panelToken", null);
+    try { sessionStorage.setItem("panelNotice", notice || ""); } catch { /* özel sekme */ }
+    $("#app").hidden = true;
+    $("#content").innerHTML = "";
+    const pa = $("#printArea");
+    if (pa) pa.innerHTML = "";
+    location.reload();
+    return;
+  }
   stopPolling();
+  stopSecurity();
   hideBulk();
   closeMenu();
   $$("dialog.modal").forEach((d) => d.remove());
   state.token = null;
   state.user = null;
   state.defaultPassword = false;
-  $("#defaultPwWarn").hidden = true;
   state.settings = null;
   state.loaded = { products: false, categories: false };
   writeLS("panelToken", null);
@@ -78,27 +93,26 @@ async function logout() {
 
 // ---------- Uygulama ----------
 async function startApp() {
+  started = true;
   if (!state.user) {
     const me = await api("/api/admin/me");
     state.user = me.user;
     state.defaultPassword = !!me.defaultPassword;
   }
-  renderPwWarn();
   $("#loginView").hidden = true;
   $("#app").hidden = false;
   document.body.dataset.role = state.user.role;
   $("#userChip").textContent = state.user.name || state.user.username;
   buildNav();
+  // Varsayılan şifre uyarısı güvenlik özetiyle birlikte gösterilir (sunucu yanıtı gelmeden de kendi hesabı için)
+  renderSecBar();
+  startSecurity();
   refreshStore();
   loadCatalog().catch(toastErr);
   startPolling();
   notifyPermissionUI();
   route(location.pathname, false);
 }
-
-// Varsayılan (herkesçe bilinen) şifreyle giriş yapıldıysa her ekranda kapanmayan uyarı
-function renderPwWarn() { $("#defaultPwWarn").hidden = !state.defaultPassword; }
-document.addEventListener("passwordchanged", () => { state.defaultPassword = false; renderPwWarn(); });
 
 function allowedPages() { return PAGES.filter((p) => !p.admin || isAdmin()); }
 
@@ -216,6 +230,7 @@ export function renderStorePill(status) {
   pill.querySelector(".lbl-s").textContent = status.state === "durduruldu" ? "Durduruldu" : status.state === "acik" ? `Açık${status.closesAt ? " · " + status.closesAt : ""}` : "Kapalı";
   pill.title = isAdmin() ? `${status.label} — değiştirmek için dokunun` : status.label;
 }
+document.addEventListener("storerefresh", () => refreshStore());
 document.addEventListener("storestatus", (e) => { if (state.store) state.store.status = e.detail; renderStorePill(e.detail); });
 setInterval(() => { if (state.user && document.visibilityState === "visible") refreshStore(); }, 120000);
 
@@ -251,9 +266,19 @@ $("#storePill").addEventListener("click", async () => {
   }
 });
 
+// Başka sekmede çıkış yapıldı ya da başka kullanıcıyla girildi: bu sekmedeki eski kullanıcının ekranı kalmasın
+window.addEventListener("storage", (e) => {
+  if (e.key === "panelToken" && started && e.newValue !== state.token) showLogin("Oturum başka bir sekmede değişti. Lütfen tekrar giriş yapın.");
+});
+
 // ---------- Başlat ----------
+let pendingNotice = null;
+try {
+  pendingNotice = sessionStorage.getItem("panelNotice");
+  sessionStorage.removeItem("panelNotice");
+} catch { /* özel sekme */ }
 if (state.token) {
   startApp().catch((e) => { if (e && e.status !== 401) showLogin(e.message); });
 } else {
-  showLogin();
+  showLogin(pendingNotice || undefined);
 }

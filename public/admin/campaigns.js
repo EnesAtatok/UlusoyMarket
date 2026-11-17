@@ -265,7 +265,7 @@ function renderAnnouncement() {
       <p class="muted small" style="margin:0">Mağazanın en üstünde ince bir bant olarak görünür. Örn. “Bu akşam 23:00'e kadar tüm meyvelerde %10 indirim”.</p>
       <label class="switch big"><input type="checkbox" name="active" ${a.active ? "checked" : ""}> Duyuru bandı yayında</label>
       <label class="field"><span>Duyuru metni</span><textarea name="text" maxlength="300" rows="3">${esc(a.text)}</textarea><span class="counter hint"><span>Kısa tutun; telefonda tek satır okunur.</span><span id="anCount"></span></span></label>
-      <div><span class="field-label">Ön izleme</span><div id="anPrev" style="margin-top:6px;padding:9px 14px;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;font-size:14px"></div></div>
+      <div><span class="field-label">Ön izleme</span><div id="anPrev" style="margin-top:6px;padding:9px 14px;border-radius:8px;background:var(--coal);color:#fff;font-weight:600;border-bottom:2px solid var(--gold);font-size:14px"></div></div>
     </div>
     <div class="card-foot"><span class="small muted grow" id="anState"></span><button class="btn btn-primary" id="anSave">Kaydet</button></div>
   </form>`;

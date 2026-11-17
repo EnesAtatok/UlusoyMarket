@@ -42,7 +42,9 @@ test("doğrulamalar: ad, telefon, adres, KVKK, bölge, ödeme, para üstü", asy
     [{ phone: "1234" }, 400, /Telefon 0 ile başlamalı/],
     [{ address: "kısa" }, 400, /en az 10 karakter/],
     [{ address: "Şükrüpaşa <script> No:5 D:3" }, 400, /izin verilmeyen karakter/],
-    [{ kvkk: false }, 400, /KVKK/],
+    [{ consents: [] }, 400, /onayları verin/],
+    // Eski "kvkk: true" alanı geriye dönük kabul edilmez
+    [{ consents: undefined, kvkk: true }, 400, /KVKK Aydınlatma/],
     [{ zoneId: 999 }, 400, /teslimat yapılmıyor/],
     [{ zoneId: undefined }, 400, /bölgesini seçin/],
     [{ payment: "bitcoin" }, 400, /Ödeme yöntemini seçin/],
@@ -176,15 +178,20 @@ test("stok: siparişte düşer, 0 olunca tükendi sayılır, iptalde geri ekleni
   assert.equal((await s.req("GET", "/api/store")).json.products.find((x) => x.id === 30).soldOut, false);
 });
 
-test("müşteri iptali: yalnızca Yeni durumunda; token ya da telefonla", async () => {
+test("müşteri iptali: yalnızca Yeni durumunda ve yalnızca token ile (telefonla iptal yok)", async () => {
   const phone = freshPhone();
   let r = await post(orderBody({ phone }));
   const { id, token } = r.json;
   // Yanlış token
   r = await s.req("POST", `/api/orders/${id}/cancel`, { token: "0".repeat(24) });
   assert.equal(r.status, 404);
-  // Telefonla iptal
-  r = await s.req("POST", `/api/orders/${id}/cancel`, { phone, reason: "Yanlışlıkla verdim" });
+  // Telefonla iptal kaldırıldı (sorgu ayarı açık olsa da)
+  s.app.db.settings.privacy.phoneLookup = true;
+  r = await s.req("POST", `/api/orders/${id}/cancel`, { phone });
+  s.app.db.settings.privacy.phoneLookup = false;
+  assert.equal(r.status, 404);
+  assert.equal(s.app.db.orders.find((x) => x.id === id).status, "Yeni");
+  r = await s.req("POST", `/api/orders/${id}/cancel`, { token, reason: "Yanlışlıkla verdim" });
   assert.equal(r.status, 200);
   assert.equal(r.json.status, "İptal");
   assert.equal(r.json.cancelledBy, "musteri");
@@ -242,7 +249,10 @@ test("Telegram hatası siparişi engellemez; ayarlıysa mesaj gönderilir", asyn
     assert.equal(got[0].url, "/bot123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ/sendMessage");
     assert.equal(got[0].body.chat_id, "42");
     assert.match(got[0].body.text, /Yeni sipariş #1/);
-    assert.match(got[0].body.text, /Ayşe Yılmaz/);
+    // Telegram'a kişisel veri gitmez (YASAL.md §4.3.4): ad, telefon, adres, not yok; no, tür, bölge, tutar var
+    assert.doesNotMatch(got[0].body.text, /Ayşe|Yılmaz|0532|Şükrüpaşa Mah|Deneme Sok/);
+    assert.match(got[0].body.text, /Eve teslim · Şükrüpaşa/);
+    assert.match(got[0].body.text, /Toplam: ₺232,50/);
   } finally {
     await t.close();
     fake.close();
@@ -259,11 +269,18 @@ test("Telegram hatası siparişi engellemez; ayarlıysa mesaj gönderilir", asyn
   }
 });
 
-test("takip: telefonun son 10 hanesiyle sorgu", async () => {
+test("takip: telefonun son 10 hanesiyle sorgu (ayar açıkken); kapalıyken 404", async () => {
   const r = await post(orderBody({ phone: "05357654321" }));
+  const off = await s.req("GET", `/api/orders/${r.json.id}?phone=5357654321`);
+  assert.equal(off.status, 404);
+  assert.equal(off.json.code, "SORGU_KAPALI");
+  s.app.db.settings.privacy.phoneLookup = true;
   const t = await s.req("GET", `/api/orders/${r.json.id}?phone=5357654321`);
   assert.equal(t.status, 200);
-  assert.equal(t.json.token, r.json.token);
+  // Salt okunur durum: takip anahtarı (iptal/belge/iade yetkisi) telefonla verilmez
+  assert.equal(t.json.readOnly, true);
+  assert.equal(t.json.token, undefined);
+  assert.equal(t.json.status, "Yeni");
   const bad = await s.req("GET", `/api/orders/${r.json.id}?phone=05350000000`);
   assert.equal(bad.status, 404);
 });

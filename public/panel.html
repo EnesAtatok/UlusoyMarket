@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Panel · Ulusoy Market</title>
-  <meta name="theme-color" content="#14213D" />
-  <link rel="icon" href="/img/logo.webp" />
-  <link rel="apple-touch-icon" href="/img/logo.webp" />
+  <meta name="theme-color" content="#0B0B0C" />
+  <link rel="icon" type="image/png" href="/img/icon-192.png" />
+  <link rel="apple-touch-icon" href="/img/icon-192.png" />
   <link rel="stylesheet" href="/admin.css" />
   <script type="module" src="/admin.js"></script>
 </head>
@@ -69,12 +69,23 @@
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-shield-alert" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/></symbol>
+    <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-list-check" viewBox="0 0 24 24"><path d="M11 6h10M11 12h10M11 18h10M3 6l1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></symbol>
+    <symbol id="i-scale" viewBox="0 0 24 24"><path d="M12 3v18M7 21h10M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01"/></symbol>
+    <symbol id="i-check-square" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0M12 20h.01"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M19 4l2 2"/></symbol>
   </svg>
 
   <!-- Giriş -->
   <main id="loginView" class="login" hidden>
     <form id="loginForm" class="login-card" novalidate>
-      <img class="login-logo" src="/img/logo.webp" alt="" width="64" height="68" />
+      <img class="login-logo" src="/img/icon-192.png" alt="Ulusoy Market logosu" width="96" height="96" />
       <h1>Ulusoy Market<span>Yönetim paneli</span></h1>
       <p id="loginNotice" class="login-notice" role="status" hidden></p>
       <label class="field"><span>Kullanıcı adı</span>
@@ -96,7 +107,7 @@
   <div id="app" class="app" hidden>
     <aside class="side" aria-label="Ana menü">
       <a class="brand" href="/panel/siparisler" data-nav="siparisler">
-        <img src="/img/logo.webp" alt="" width="34" height="36" />
+        <img src="/img/icon-192.png" alt="" width="40" height="40" />
         <span class="brand-text"><b>Ulusoy Market</b><small>Panel</small></span>
       </a>
       <nav class="side-nav" id="sideNav"></nav>
@@ -108,20 +119,18 @@
 
     <div class="main-col">
       <header class="topbar">
-        <img class="topbar-logo" src="/img/logo.webp" alt="" width="28" height="30" />
+        <img class="topbar-logo" src="/img/icon-192.png" alt="" width="32" height="32" />
         <h1 class="topbar-title" id="pageTitle">Siparişler</h1>
         <div class="topbar-tools">
+          <button type="button" class="sec-chip" id="secChip" hidden><svg class="i"><use href="#i-shield-alert"/></svg><span class="n"></span><span class="lbl">uyarı</span></button>
+          <button type="button" class="live" id="liveInd" data-state="poll" title="Canlı bağlantı durumu"><span class="dot"></span><span class="lbl">Bağlanıyor…</span></button>
           <button type="button" class="store-pill" id="storePill" title="Sipariş alım durumu"><span class="dot"></span><span class="lbl">…</span><span class="lbl-s">…</span></button>
           <button type="button" class="icon-btn" id="soundBtn" aria-pressed="true" aria-label="Sesli uyarı açık"><svg class="i"><use href="#i-volume"/></svg></button>
           <button type="button" class="icon-btn" id="notifyBtn" aria-label="Tarayıcı bildirimlerine izin ver" hidden><svg class="i"><use href="#i-bell"/></svg></button>
           <span class="user-chip" id="userChip"></span>
         </div>
       </header>
-      <div id="defaultPwWarn" class="pw-warn" role="alert" hidden>
-        <svg class="i"><use href="#i-alert"/></svg>
-        <span><b>Güvenlik uyarısı:</b> bu hesabın şifresi herkesçe bilinen varsayılan şifre. Siteyi yayına almadan önce hemen değiştirin.</span>
-        <a class="btn btn-sm" href="/panel/hesap" data-link>Şifreyi değiştir</a>
-      </div>
+      <div id="secBar" class="secbar" role="region" aria-label="Güvenlik ve yasal uyarılar" hidden></div>
       <div id="audioHint" class="audio-hint" hidden>
         <svg class="i"><use href="#i-volume"/></svg>
         <span>Yeni sipariş sesinin çalabilmesi için sayfada bir kez dokunun.</span>

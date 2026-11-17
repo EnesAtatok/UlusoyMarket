@@ -11,10 +11,16 @@ services:
       PUBLIC_URL: "${PUBLIC_URL:-}"
       # Önünde Caddy/nginx gibi bir ters vekil varsa 1
       TRUST_PROXY: "${TRUST_PROXY:-1}"
+      # Başlıklarına güvenilen vekil adresleri: vekil (Caddy/nginx) kapsayıcıya Docker köprü ağından bağlanır
+      TRUSTED_PROXIES: "${TRUSTED_PROXIES:-127.0.0.0/8,::1,172.16.0.0/12}"
+      # Depoda şifreleme anahtarı (db.json, oturumlar, yedekler AES-256-GCM). KAYBEDERSENİZ VERİ AÇILAMAZ — sunucu dışında saklayın.
+      DATA_KEY: "${DATA_KEY:-}"
     volumes:
       - market-data:/data
     # Sertleştirme: uygulama yalnızca /data'ya yazar; kök dosya sistemi salt okunur, ek yetki yok
     read_only: true
+    mem_limit: 512m
+    pids_limit: 200
     tmpfs:
       - /tmp
     cap_drop:

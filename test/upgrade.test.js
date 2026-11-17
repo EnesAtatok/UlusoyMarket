@@ -48,7 +48,7 @@ test("eski db.json kayıpsız yükseltilir; eski takip anahtarı ve telefonla so
   const s = await start({ dataDir: dir });
   try {
     const db = s.app.db;
-    assert.equal(db.meta.schemaVersion, 2);
+    assert.equal(db.meta.schemaVersion, 3);
     // Katalog korunur, yeni alanlar varsayılanla dolar
     assert.equal(db.products.length, 2);
     assert.equal(db.products[1].soldOut, true);
@@ -90,7 +90,8 @@ test("eski db.json kayıpsız yükseltilir; eski takip anahtarı ve telefonla so
     const original = JSON.parse(fs.readFileSync(path.join(dir, "backups", backups.find((f) => f.startsWith("yukseltme-oncesi-"))), "utf8"));
     assert.deepEqual(original, legacyDb());
 
-    // Eski sözleşme: GET /api/orders/:id?token= ve ?phone=
+    // Eski sözleşme: GET /api/orders/:id?token= ve ?phone= (telefonla sorgu artık ayara bağlı, varsayılan kapalı)
+    s.app.db.settings.privacy.phoneLookup = true;
     let r = await s.req("GET", "/api/orders/1?token=abcdefabcdefabcdefabcdef");
     assert.equal(r.status, 200);
     assert.equal(r.json.id, 1);
@@ -102,14 +103,14 @@ test("eski db.json kayıpsız yükseltilir; eski takip anahtarı ve telefonla so
     r = await s.req("GET", "/api/orders/2?phone=0533%20111%2022%2033");
     assert.equal(r.status, 200);
     assert.equal(r.json.cancelNote, "Adrese ulaşılamadı");
-    assert.equal(r.json.token, o2.token);
+    assert.equal(r.json.token, undefined, "telefonla sorgu takip anahtarı vermez");
     r = await s.req("GET", "/api/orders/1?token=yanlis");
     assert.equal(r.status, 404);
-    assert.equal(r.json.error, "Sipariş bulunamadı. Numara ve telefonu kontrol edin.");
+    assert.equal(r.json.code, "BULUNAMADI");
 
     // Yükseltilmiş veri diske yazılmış olmalı
     const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "db.json"), "utf8"));
-    assert.equal(onDisk.meta.schemaVersion, 2);
+    assert.equal(onDisk.meta.schemaVersion, 3);
   } finally {
     await s.close();
     fs.rmSync(dir, { recursive: true, force: true });

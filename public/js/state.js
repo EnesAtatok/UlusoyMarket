@@ -1,24 +1,15 @@
 // Uygulama durumu, sepet işlemleri ve sunucu teklifi (POST /api/cart/quote).
-import { load, save, api, debounce, fold } from "./lib.js";
-
-// Reyon adına göre yer tutucu rengi (0 yeşil, 1 mavi, 2 mercan, 3 sarı, 4 lila, 5 turkuaz, 6 gül, 7 kum)
-const TINTS = [
-  ["meyve", 0], ["sebze", 0], ["sut", 1], ["kahvalti", 1], ["sarkuteri", 2], ["et", 2], ["firin", 3], ["ekmek", 3],
-  ["temel", 7], ["bakliyat", 7], ["soguk", 5], ["icecek", 5], ["sicak", 6], ["cay", 6], ["kahve", 6],
-  ["atistirmalik", 3], ["cerez", 3], ["cikolata", 2], ["sekerleme", 6], ["dondurma", 4], ["tatli", 4],
-  ["temizlik", 5], ["kisisel", 4], ["bakim", 4], ["bebek", 6], ["ev", 7], ["pratik", 7],
-];
-function tintFor(name, i) {
-  const words = fold(name).split(/[^a-z]+/);
-  for (const [k, t] of TINTS) if (words.includes(k)) return t;
-  return i % 8;
-}
+import { load, save, api, debounce } from "./lib.js";
 
 const listeners = {};
 export const on = (ev, fn) => (listeners[ev] ||= []).push(fn);
 export const emit = (ev, data) => (listeners[ev] || []).forEach((fn) => fn(data));
 
-const profile = load("profile", {});
+const profile = load("profile", {}) || {};
+// "Bilgilerimi bu cihazda sakla" (YASAL.md §2.2 E): varsayılan kapalı. Önceki sürümde bilgileri zaten saklanmış
+// cihazlarda tercih açık sayılır (veri kaybolmasın); kutu kaldırılırsa ad, telefon ve adresler silinir.
+if (typeof profile.remember !== "boolean") profile.remember = !!(profile.name || profile.phone || (load("addresses", []) || []).length);
+const PERSONAL = ["name", "phone"];
 
 export const S = {
   store: null, // GET /api/store yanıtı
@@ -28,11 +19,14 @@ export const S = {
   catById: new Map(),
   cart: sanitizeCartShape(load("cart", {})), // { productId: adet } — eski prototiple aynı anahtar
   favs: new Set(load("favs", [])),
-  myOrders: load("myOrders", []), // [{ id, token }] — eski prototiple aynı anahtar
+  myOrders: sanitizeMyOrders(load("myOrders", [])), // [{ id, token }] — eski prototiple aynı anahtar
   orderData: [], // takip nesneleri
   ordersLoaded: false,
   profile, // { name, phone, payment, substitution }
-  addresses: load("addresses", []), // [{ id, zoneId, address }]
+  // [{ id, zoneId, address }] — id HTML özniteliğine/seçiciye girdiği için biçimi denetlenir
+  addresses: (Array.isArray(load("addresses", [])) ? load("addresses", []) : []).filter(
+    (a) => a && /^[a-z0-9]{1,20}$/.test(String(a.id)) && typeof a.address === "string"
+  ),
   delivery: { type: profile.type === "gelal" ? "gelal" : "teslimat", zoneId: profile.zoneId ?? null },
   coupon: load("coupon", ""), // uygulanmış kupon kodu
   couponMsg: null, // { valid, message, code }
@@ -42,6 +36,15 @@ export const S = {
   notices: [], // sepetten çıkarılan / adedi düşürülen ürün mesajları
   offline: !navigator.onLine,
 };
+
+function sanitizeMyOrders(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  return list
+    .map((o) => ({ id: Number(o && o.id), token: String((o && o.token) || "") }))
+    .filter((o) => o.id > 0 && o.token && !seen.has(o.id) && seen.add(o.id))
+    .slice(0, 30);
+}
 
 function sanitizeCartShape(c) {
   const out = {};
@@ -59,7 +62,7 @@ export function setStore(data) {
   S.products = data.products || [];
   S.byId = new Map(S.products.map((p) => [p.id, p]));
   S.categories = (data.categories || []).filter((c) => S.products.some((p) => p.categoryId === c.id));
-  S.catById = new Map((data.categories || []).map((c, i) => [c.id, { ...c, tint: tintFor(c.name, i) }]));
+  S.catById = new Map((data.categories || []).map((c) => [c.id, c]));
   // Artık satılmayan ürünleri sepetten çıkar, adetleri sınıra çek
   let changed = false;
   for (const id of Object.keys(S.cart)) {
@@ -124,13 +127,26 @@ export function setDelivery(patch) {
   Object.assign(S.delivery, patch);
   S.profile.type = S.delivery.type;
   S.profile.zoneId = S.delivery.zoneId;
-  save("profile", S.profile);
+  persistProfile();
   emit("delivery");
   requestQuote();
 }
 export function saveProfile(patch) {
   Object.assign(S.profile, patch);
-  save("profile", S.profile);
+  persistProfile();
+}
+function persistProfile() {
+  const p = { ...S.profile };
+  if (!p.remember) for (const k of PERSONAL) delete p[k];
+  save("profile", p);
+}
+/** "Bu cihazdaki bilgilerimi sil": ad, telefon ve kayıtlı adresler cihazdan silinir */
+export function forgetPersonal() {
+  for (const k of PERSONAL) delete S.profile[k];
+  S.profile.remember = false;
+  S.addresses = [];
+  save("addresses", null);
+  persistProfile();
 }
 
 export function setCoupon(code) {
@@ -150,6 +166,7 @@ export function quoteBody() {
     zoneId: S.delivery.type === "teslimat" ? S.delivery.zoneId : undefined,
     couponCode: S.coupon || undefined,
     phone: /^0\d{10}$/.test(S.profile.phone || "") ? S.profile.phone : undefined,
+    payment: S.profile.payment === "kart" || S.profile.payment === "nakit" ? S.profile.payment : undefined,
   };
 }
 

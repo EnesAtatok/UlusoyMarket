@@ -26,6 +26,8 @@ echo  Magaza:          http://localhost:3000
 echo  Yonetim paneli:  http://localhost:3000/panel
 echo  Panel girisi:    kullanici adi "admin", sifre ilk kurulumda ADMIN_PASSWORD
 echo                   (verilmediyse admin123 - panelden Hesabim ile hemen degistirin)
+echo  Sifre hala admin123 ise market YALNIZCA BU BILGISAYARDAN acilir (telefon, tablet
+echo  ve internet erisemez). Sifreyi degistirip bu pencereyi kapatip tekrar acinca agdan acilir.
 echo.
 echo  Bu pencere acik kaldigi surece market calisir. Kapatmak icin pencereyi kapatin.
 echo  Veriler data\ klasorundedir (db.json, backups\, uploads\).

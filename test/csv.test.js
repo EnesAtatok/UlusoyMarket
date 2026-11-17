@@ -31,7 +31,7 @@ test("ürün dışa aktarma: UTF-8 BOM, ; ayraç, virgüllü ondalık, Evet/Hay�
   assert.match(res.headers.get("content-disposition"), /attachment; filename="urunler-\d{4}-\d{2}-\d{2}\.csv"/);
   assert.equal(buf.subarray(0, 3).toString("hex"), "efbbbf");
   const rows = CSV.parse(buf.toString("utf8"));
-  assert.deepEqual(rows[0], ["ID", "Barkod", "Ürün adı", "Marka", "Kategori", "Fiyat", "Eski fiyat", "Birim", "Stok", "Sipariş başına en fazla", "Tükendi", "Gizli", "Öne çıkan", "Açıklama", "Emoji"]);
+  assert.deepEqual(rows[0], ["ID", "Barkod", "Ürün adı", "Marka", "Kategori", "Fiyat", "Eski fiyat", "Birim", "Stok", "Sipariş başına en fazla", "Tükendi", "Gizli", "Öne çıkan", "Açıklama", "Emoji", "Cayma hakkı"]);
   assert.equal(rows.length, s.app.db.products.length + 1);
   assert.equal(rows[1][2], "'=HYPERLINK(\"x\")");
   const milk = rows.find((r) => r[0] === "13");
@@ -102,6 +102,48 @@ test("dışa aktarılan dosya geri içe aktarılınca değişiklik olmaz (gidiş
   assert.equal(j.added, 0);
   assert.equal(j.updated, 0);
   assert.equal(j.unchanged, s.app.db.products.length);
+});
+
+test("CSV: cayma hakkı sütunu dışa/içe aktarılır; eski fiyat 10 günün en düşüğünden yüksekse uyarı, düşük fiyatta otomatik", async () => {
+  // Dışa aktarma: ürünün kendi değeri etiketle, yoksa "Kategoriden (…)"
+  const p13 = s.app.db.products.find((p) => p.id === 13);
+  p13.caymaDurumu = "var";
+  const rows = CSV.parse((await exportCsv()).buf.toString("utf8"));
+  const col = rows[0].indexOf("Cayma hakkı");
+  assert.equal(rows.find((r) => r[0] === "13")[col], "Var");
+  assert.match(rows.find((r) => r[0] === "1")[col], /^Kategoriden \(Yok – çabuk bozulan\)$/);
+  // İçe aktarma: etiket, kod ve "kategoriden" kabul; anlamsız değer satır hatası
+  const csv =
+    "Barkod;Ürün adı;Cayma hakkı\r\n" +
+    ";Tam Yağlı Süt 1 L;Yok – çabuk bozulan\r\n" +
+    ";Domates;acilirsa_yok_hijyen\r\n" +
+    ";Ekmek (Normal);belki\r\n";
+  let r = await s.req("POST", "/api/admin/products/import", { csv }, admin);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(p13.caymaDurumu, "yok_cabuk_bozulan");
+  assert.equal(s.app.db.products.find((p) => p.id === 1).caymaDurumu, "acilirsa_yok_hijyen");
+  assert.deepEqual(r.json.errors.map((e) => e.row), [4]);
+  r = await s.req("POST", "/api/admin/products/import", { csv: "Ürün adı;Cayma hakkı\r\nDomates;Kategoriden (Var)\r\n" }, admin);
+  assert.equal(s.app.db.products.find((p) => p.id === 1).caymaDurumu, null);
+
+  // Eski fiyat: ürün 10 gündür 46,5 → 60 eski fiyatla indirim girilirse uyarı (satır yine alınır)
+  p13.price = 46.5;
+  p13.oldPrice = null;
+  p13.priceHistory = [{ price: 46.5, at: new Date(Date.now() - 20 * 86400000).toISOString() }];
+  r = await s.req("POST", "/api/admin/products/import", { csv: "Ürün adı;Fiyat;Eski fiyat\r\nTam Yağlı Süt 1 L;40;60\r\n" }, admin);
+  assert.equal(r.json.updated, 1);
+  assert.equal(r.json.warnings.length, 1, r.text);
+  assert.equal(r.json.warnings[0].row, 2);
+  assert.match(r.json.warnings[0].message, /son 10 günde uygulanan en düşük fiyat/);
+  assert.equal(p13.price, 40);
+  assert.equal(p13.oldPrice, 60);
+  // Eski fiyat sütunu yoksa indirim öncesi fiyat geçmişten konur (panelle aynı)
+  p13.priceHistory = [{ price: 46.5, at: new Date(Date.now() - 20 * 86400000).toISOString() }];
+  p13.price = 46.5;
+  p13.oldPrice = null;
+  r = await s.req("POST", "/api/admin/products/import", { csv: "Ürün adı;Fiyat\r\nTam Yağlı Süt 1 L;42\r\n" }, admin);
+  assert.equal(r.json.warnings.length, 0);
+  assert.equal(p13.oldPrice, 46.5);
 });
 
 test("başlıksız / boş dosya", async () => {
