@@ -157,3 +157,28 @@ test("telefon başına kupon sınırı (sipariş verildikten sonra)", async () =
   assert.equal(r.status, 400);
   assert.equal(r.json.code, "KUPON");
 });
+
+test("kiloluk üründe 100 gram hassasiyet (1,5 kg, 1,3 kg) kabul edilir; adetle satılanda kesir aşağı yuvarlanır", async () => {
+  const kg = s.app.db.products.find((p) => p.unit === "kg" && !p.hidden && !p.soldOut && p.stock === null && p.id !== 14);
+  assert.ok(kg, "seed kataloğunda kiloluk ürün olmalı");
+  let r = await quote({ items: [{ productId: kg.id, qty: 1.5 }, { productId: 13, qty: 2.7 }], type: "gelal" });
+  const kl = r.json.items.find((i) => i.productId === kg.id);
+  assert.equal(kl.qty, 1.5);
+  assert.equal(kl.lineTotal, Math.round(kg.price * 1.5 * 100) / 100);
+  assert.equal(r.json.items.find((i) => i.productId === 13).qty, 2);
+  r = await quote({ items: [{ productId: kg.id, qty: "1,3" }], type: "gelal" });
+  assert.equal(r.json.items[0].qty, 1.3);
+  r = await quote({ items: [{ productId: kg.id, qty: 0.7000000001 }], type: "gelal" });
+  assert.equal(r.json.items[0].qty, 0.7); // en yakın 100 grama
+  r = await quote({ items: [{ productId: kg.id, qty: 0.04 }], type: "gelal" });
+  assert.equal(r.json.removed.length, 1);
+  // Sipariş: 1,5 kg kaydedilir, tam sayı stoktan yukarı yuvarlanarak (2) düşer
+  kg.stock = 10;
+  const body = { name: "Ayşe Kaya", phone: "05440000009", address: "Meydan Mah. İki Sok. No:2", zoneId: 2, consents: REQUIRED_CONSENTS, items: [{ productId: kg.id, qty: 1.5 }, ...milk(5)] };
+  r = await s.req("POST", "/api/orders", body);
+  assert.equal(r.status, 201, r.text);
+  const line = r.json.order.items.find((i) => i.productId === kg.id);
+  assert.equal(line.qty, 1.5);
+  assert.equal(kg.stock, 8);
+  kg.stock = null;
+});

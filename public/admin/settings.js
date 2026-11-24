@@ -217,7 +217,7 @@ function orderingForm(body, s) {
   const o = s.ordering;
   sectionCard(body, {
     title: "Sipariş ayarları", desc: "Tutarlar TL. Bölgeye özel ücret/minimum tanımlanmamışsa buradaki genel değerler kullanılır.",
-    inner: `<div class="big-toggle ${o.enabled ? "" : "off"}" id="oEnBox"><div><b id="oEnTitle">${o.enabled ? "Online sipariş alınıyor" : "Sipariş alımı durduruldu"}</b><span>Kapatınca mağazada sipariş düğmesi yerine aşağıdaki mesaj görünür.</span></div>
+    inner: `<div class="big-toggle ${o.enabled ? "" : "off"}" id="oEnBox"><div><b id="oEnTitle">${o.enabled ? "Online sipariş alınıyor" : "Sipariş alımı durduruldu"}</b><span>Anahtar hemen uygulanır, Kaydet gerekmez. Kapalıyken müşteri sipariş veremez; mağazada sipariş düğmesi yerine aşağıdaki mesaj görünür.</span></div>
         <label class="switch big"><input type="checkbox" name="enabled" ${o.enabled ? "checked" : ""} aria-label="Online sipariş alımı"></label></div>
       <label class="field mt"><span>Sipariş alınmıyorken gösterilecek mesaj</span><textarea name="pausedMessage" maxlength="300" rows="2">${val(o.pausedMessage)}</textarea></label>
       <div class="form-sec"><h4>Tutarlar ve süre</h4><div class="grid-4 keep-2">
@@ -234,9 +234,34 @@ function orderingForm(body, s) {
           <label class="check"><input type="checkbox" name="kart" ${o.payments.kart ? "checked" : ""}> Kapıda kart</label></div>
         <label class="field" style="max-width:280px"><span>Telefon başına en fazla aktif sipariş</span><input name="maxActiveOrdersPerPhone" inputmode="numeric" value="${val(o.maxActiveOrdersPerPhone)}"></label>
       </div>`,
-    after: (f) => f.enabled.addEventListener("change", () => {
-      $("#oEnBox").classList.toggle("off", !f.enabled.checked);
-      $("#oEnTitle").textContent = f.enabled.checked ? "Online sipariş alınıyor" : "Sipariş alımı durduruldu (kaydedince)";
+    // Acil durum anahtarı: "Kaydet"i beklemeden hemen uygulanır (eskiden kaydedilmeden kalınca siparişler alınmaya devam ediyordu)
+    after: (f) => f.enabled.addEventListener("change", async () => {
+      const on = f.enabled.checked;
+      const paint = (v) => {
+        $("#oEnBox").classList.toggle("off", !v);
+        $("#oEnTitle").textContent = v ? "Online sipariş alınıyor" : "Sipariş alımı durduruldu";
+      };
+      // Formda başka kaydedilmemiş değişiklik var mı (anahtar hariç)?
+      f.enabled.checked = !on;
+      const otherDirty = tracker ? tracker.changed() : false;
+      f.enabled.checked = on;
+      paint(on);
+      f.enabled.disabled = true;
+      try {
+        const msg = f.pausedMessage.value.trim();
+        const r = await api("/api/admin/settings", { method: "PATCH", body: { ordering: { enabled: on, ...(msg ? { pausedMessage: msg } : {}) } } });
+        state.settings = r.settings;
+        document.dispatchEvent(new CustomEvent("storestatus", { detail: r.status }));
+        if (tracker && !otherDirty) tracker.reset();
+        else if (tracker) tracker.check();
+        $("#sState").textContent = otherDirty ? "Kaydedilmemiş değişiklik var" : "";
+        loadSecurity();
+        toast(on ? "Online sipariş alımı açıldı." : "Online sipariş alımı durduruldu. Müşteriler sipariş veremez.", on ? "ok" : "warn");
+      } catch (er) {
+        f.enabled.checked = !on;
+        paint(!on);
+        toastErr(er);
+      } finally { f.enabled.disabled = false; }
     }),
     collect: (f) => {
       if (!f.nakit.checked && !f.kart.checked) throw new Error("En az bir ödeme yöntemi açık olmalı.");

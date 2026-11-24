@@ -1,5 +1,5 @@
 // Sepet (sayfa + masaüstü yan panel + mobil yapışkan özet) ve sipariş formu.
-import { $, esc, tl, icon, telHref, waHref, api, save, toast } from "./lib.js";
+import { $, esc, tl, icon, telHref, waHref, api, save, toast, fmtQty } from "./lib.js";
 import {
   S, emit, cartLines, cartCount, cartLocalTotal, zones, zoneById, status, storeInfo, setDelivery, setCoupon,
   saveProfile, forgetPersonal, requestQuote, applyQuote, blockingErrors, clearCart, quoteBody,
@@ -481,7 +481,7 @@ function reviewHtml() {
         ${thumb(p.id)}
         <div class="rv-info">
           <p class="rv-name">${esc(p.name)}${p.brand ? ` <span class="muted">(${esc(p.brand)})</span>` : ""}</p>
-          <p class="rv-meta">${qty} × ${tl(p.price)}${unit}</p>
+          <p class="rv-meta">${p.unit === "kg" ? `${fmtQty(qty)} kg` : qty} × ${tl(p.price)}${unit}</p>
           ${label ? `<p class="cayma cayma-${esc(code)}">Cayma: ${esc(label)}</p>` : ""}
         </div>
         <p class="rv-total">${tl(lt)}</p>
@@ -556,7 +556,7 @@ function coSummary() {
     <ul class="co-lines co-lines-img">${lines
       .map((l) => {
         const ql = quoteLine(l.product.id);
-        return `<li>${thumb(l.product.id)}<span class="co-q">${l.qty}×</span><span class="co-n">${esc(l.product.name)}</span><span class="co-t">${tl(ql && ql.qty === l.qty ? ql.lineTotal : l.product.price * l.qty)}</span></li>`;
+        return `<li>${thumb(l.product.id)}<span class="co-q">${l.product.unit === "kg" ? `${fmtQty(l.qty)} kg` : `${l.qty}×`}</span><span class="co-n">${esc(l.product.name)}</span><span class="co-t">${tl(ql && ql.qty === l.qty ? ql.lineTotal : l.product.price * l.qty)}</span></li>`;
       })
       .join("")}</ul>
     <a class="btn btn-text" href="#/sepet">Sepeti düzenle</a>
