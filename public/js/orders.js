@@ -1,6 +1,6 @@
 // Sipariş takibi, cihaza özel Siparişlerim, takip bağlantısı, belgeler, iptal, cayma/iade talebi, üst şerit.
 // Siparişler bu cihazda saklanan gizli anahtarla (token) bağlıdır: localStorage "myOrders" = [{ id, token }].
-import { $, esc, tl, icon, api, save, toast, fmtTime, fmtDateTime, telHref, waHref } from "./lib.js";
+import { $, esc, tl, icon, api, save, toast, fmtTime, fmtDateTime, telHref, waHref, fmtQty } from "./lib.js";
 import { S, emit, storeInfo, setQty } from "./state.js";
 import { thumb } from "./shop.js";
 
@@ -183,7 +183,7 @@ function cancelBoxHtml(o) {
 function itemsHtml(o) {
   return `<ul class="co-lines co-lines-img">${(o.items || [])
     .map(
-      (i) => `<li>${thumb(i.productId, i.name)}<span class="co-q">${i.qty}×</span><span class="co-n">${esc(i.name)}</span><span class="co-t">${tl(i.price * i.qty)}</span></li>`,
+      (i) => `<li>${thumb(i.productId, i.name)}<span class="co-q">${i.unit === "kg" ? `${fmtQty(i.qty)} kg` : `${i.qty}×`}</span><span class="co-n">${esc(i.name)}</span><span class="co-t">${tl(i.price * i.qty)}</span></li>`,
     )
     .join("")}</ul>`;
 }
@@ -230,7 +230,7 @@ function returnHtml(o) {
   if (o.status !== "Teslim edildi" || S.store?.features?.returnRequests === false) return "";
   const items = (o.items || [])
     .map(
-      (i, n) => `<label class="check check-small"><input type="checkbox" name="ret" value="${i.productId}" data-qty="${i.qty}" id="ret${o.id}-${n}"><span>${esc(i.name)} <span class="muted">(${i.qty} ${esc(i.unit || "adet")})</span></span></label>`,
+      (i, n) => `<label class="check check-small"><input type="checkbox" name="ret" value="${i.productId}" data-qty="${i.qty}" id="ret${o.id}-${n}"><span>${esc(i.name)} <span class="muted">(${fmtQty(i.qty)} ${esc(i.unit || "adet")})</span></span></label>`,
     )
     .join("");
   return `<details class="track-card return-box">

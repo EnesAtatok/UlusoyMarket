@@ -110,3 +110,11 @@ export function toast(msg, { tone = "info", ms = 2600 } = {}) {
 }
 
 export const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Miktar: kiloyla satılan üründe 100 gram hassasiyet (1,5 kg = 1 kg 500 g), diğerlerinde tam adet
+export const qtyStep = (p) => (p && p.unit === "kg" ? 0.1 : 1);
+/** Miktarı ürünün adımına yuvarlar (kayan nokta kalıntısı kalmaz) */
+export const roundQty = (q, p) => (p && p.unit === "kg" ? Math.round((Number(q) || 0) * 10) / 10 : Math.floor(Number(q) || 0));
+export const fmtQty = (q) => (Number(q) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 2 });
+/** "1,5 kg" / "3 adet" */
+export const qtyText = (q, unit) => `${fmtQty(q)} ${unit || "adet"}`;

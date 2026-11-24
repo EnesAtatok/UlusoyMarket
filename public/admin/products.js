@@ -186,6 +186,7 @@ async function onGroupsClick(e) {
       const p = state.products.find((x) => x.id === Number(d.pmore));
       const items = [{ label: "Stok güncelle", icon: "box", onClick: () => stockDialog(p) }];
       if (isAdmin()) items.unshift({ label: "Düzenle", icon: "edit", onClick: () => productDialog(p) });
+      if (isAdmin() && p.oldPrice > p.price) items.push({ label: `İndirimi kaldır (${tl(p.oldPrice)})`, icon: "tag", onClick: () => removeDiscount(p) });
       items.push({ label: "Fiyat geçmişi", icon: "history", onClick: () => priceHistoryDialog(p) });
       if (isAdmin()) items.push({ label: "Çoğalt", icon: "copy", onClick: () => duplicate(p) }, { label: p.featured ? "Öne çıkarmayı kaldır" : "Öne çıkar", icon: "star", onClick: () => patchProduct(p.id, { featured: !p.featured }).then(() => { refreshRow(p.id); toast(p.featured ? "Öne çıkarılanlardan kaldırıldı." : "Öne çıkarıldı."); }).catch(toastErr) }, "-", { label: "Sil", icon: "trash", danger: true, onClick: () => deleteProducts([p.id]) });
       openMenu(t, items);
@@ -246,6 +247,16 @@ async function onPriceBlur(e) {
   } catch (err) { toastErr(err); inp.value = numTr(p.price); inp.disabled = false; }
 }
 
+// İndirimi kaldır: satış fiyatı indirim öncesi fiyata döner (yüzde hesabıyla kuruş kayması olmaz)
+async function removeDiscount(p) {
+  const prevPrice = p.price, prevOld = p.oldPrice;
+  try {
+    const u = await patchProduct(p.id, { price: prevOld, oldPrice: null });
+    refreshRow(p.id);
+    toast(`"${u.name}" indirimi kaldırıldı: ${tl(prevPrice)} → ${tl(u.price)}.`, "ok", { action: { label: "Geri al", onClick: () => patchProduct(p.id, { price: prevPrice, oldPrice: prevOld }).then(() => refreshRow(p.id)).catch(toastErr) } });
+  } catch (e) { toastErr(e); }
+}
+
 // ---------- Toplu işlem ----------
 function renderBulk() {
   if (ps.view !== "urunler") return;
@@ -280,7 +291,13 @@ function bulkCayma(ids) {
     onSubmit: async (f) => { await runBulk("cayma", { caymaDurumu: f.cayma.value || null }); },
   });
 }
-const BULK_VERB = { cayma: "ürünün cayma durumu güncellendi", soldOut: "ürün tükendi yapıldı", available: "ürün satışa açıldı", hide: "ürün gizlendi", show: "ürün gösteriliyor", feature: "ürün öne çıkarıldı", unfeature: "ürün öne çıkanlardan kaldırıldı", move: "ürün taşındı", price: "ürünün fiyatı güncellendi", delete: "ürün silindi" };
+async function bulkUndiscount(ids) {
+  const n = state.products.filter((p) => ids.includes(p.id) && p.oldPrice > p.price).length;
+  if (!n) { toast("Seçili ürünlerin hiçbirinde indirim yok.", "warn"); return; }
+  if (!(await confirmDialog({ title: "İndirimler kaldırılsın mı?", message: `${n} ürünün fiyatı indirim öncesi fiyatına döndürülecek.${n < ids.length ? ` İndirimsiz ${ids.length - n} ürün atlanacak.` : ""}`, okLabel: "İndirimi kaldır" }))) return;
+  try { await runBulk("undiscount"); } catch (e) { toastErr(e); }
+}
+const BULK_VERB = { undiscount: "ürünün indirimi kaldırıldı", cayma: "ürünün cayma durumu güncellendi", soldOut: "ürün tükendi yapıldı", available: "ürün satışa açıldı", hide: "ürün gizlendi", show: "ürün gösteriliyor", feature: "ürün öne çıkarıldı", unfeature: "ürün öne çıkanlardan kaldırıldı", move: "ürün taşındı", price: "ürünün fiyatı güncellendi", delete: "ürün silindi" };
 async function runBulk(action, extra = {}) {
   const ids = [...ps.sel];
   const r = await api("/api/admin/products/bulk", { method: "POST", body: { ids, action, ...extra } });
@@ -298,6 +315,7 @@ async function bulkAction(id, btn) {
       return openMenu(btn, [
         { label: "Öne çıkar", icon: "star", onClick: () => runBulk("feature").catch(toastErr) },
         { label: "Öne çıkarmayı kaldır", icon: "star", onClick: () => runBulk("unfeature").catch(toastErr) },
+        { label: "İndirimi kaldır", icon: "tag", onClick: () => bulkUndiscount(ids) },
         { label: "Cayma durumu…", icon: "scale", onClick: () => bulkCayma(ids) },
         "-",
         { label: "Seçimi kaldır", icon: "x", onClick: () => { ps.sel.clear(); renderGroups(); } },

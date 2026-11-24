@@ -202,6 +202,15 @@ test("ürün toplu işlemleri: gizle/göster/tükendi/öne çıkar/taşı/fiyat/
   r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "price", percent: 10 }, admin);
   assert.equal(prod(a.id).price, 110);
   assert.equal(prod(b.id).price, 55);
+  // İndirimi kaldır: fiyat tam olarak indirim öncesi fiyata döner (yüzdeyle kuruş kayması yok), indirimsiz ürün atlanır
+  await s.req("PATCH", `/api/admin/products/${a.id}`, { price: 99, oldPrice: 110 }, admin);
+  r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "undiscount" }, admin);
+  assert.equal(r.json.processed, 1);
+  assert.equal(r.json.skipped.length, 1);
+  assert.equal(prod(a.id).price, 110);
+  assert.equal(prod(a.id).oldPrice, null);
+  r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "undiscount" }, staff);
+  assert.equal(r.status, 403);
   r = await s.req("POST", "/api/admin/products/bulk", { ids, action: "price", percent: -95 }, admin);
   assert.equal(r.status, 400);
   r = await s.req("POST", "/api/admin/products/bulk", { ids: [], action: "hide" }, admin);

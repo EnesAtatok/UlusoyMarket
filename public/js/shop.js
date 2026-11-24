@@ -1,5 +1,5 @@
 // Ana sayfa, katalog, ürün kartı ve ürün ayrıntı penceresi.
-import { esc, tl, icon, fold, telHref, waHref, $ } from "./lib.js";
+import { esc, tl, icon, fold, telHref, waHref, $, fmtQty } from "./lib.js";
 import { S, qtyOf, status, storeInfo, zones } from "./state.js";
 import { gaugeHtml } from "./hours.js";
 
@@ -48,11 +48,34 @@ export function qtyControl(p, { big = false } = {}) {
       ? `<button class="btn btn-primary btn-block" type="button" data-action="inc" data-id="${p.id}">${icon("plus")}Sepete ekle</button>`
       : `<button class="add-btn" type="button" data-action="inc" data-id="${p.id}" aria-label="Sepete ekle: ${name}">${icon("plus")}</button>`;
   }
-  const atMax = q >= p.maxQty;
+  if (p.unit === "kg") return kgControl(p, q, big);
+  const atMax = q + 1 > p.maxQty;
   return `<div class="stepper${big ? " stepper-big" : ""}" role="group" aria-label="${name} adedi">
     <button type="button" data-action="dec" data-id="${p.id}" aria-label="${q === 1 ? "Sepetten çıkar" : "Bir azalt"}: ${name}">${icon(q === 1 ? "trash" : "minus")}</button>
     <output aria-live="polite">${q}</output>
     <button type="button" data-action="inc" data-id="${p.id}" aria-label="Bir artır: ${name}"${atMax ? " disabled" : ""}>${icon("plus")}</button>
+  </div>`;
+}
+
+/** Kiloluk ürün: solda kilo (1, 2, 3 …), sağda gram (100'er g). Gram 900'ü geçince kiloya taşar. */
+function kgControl(p, q, big) {
+  const name = esc(p.name);
+  const kg = Math.floor(q + 1e-9);
+  const g = Math.round((q - kg) * 1000);
+  const fits = (d) => q + d <= p.maxQty + 1e-9;
+  const btn = (dir, step, label, disabled, trash) =>
+    `<button type="button" data-action="${dir}" data-id="${p.id}" data-step="${step}" aria-label="${trash ? "Sepetten çıkar" : label}: ${name}"${disabled ? " disabled" : ""}>${icon(trash ? "trash" : dir === "inc" ? "plus" : "minus")}</button>`;
+  return `<div class="kgq${big ? " kgq-big" : ""}" role="group" aria-label="${name} miktarı: ${fmtQty(q)} kg">
+    <div class="stepper stepper-kg${big ? " stepper-big" : ""}">
+      ${btn("dec", 1, "Bir kilo azalt", kg < 1, q - 1 <= 1e-9 && kg >= 1)}
+      <output>${kg}<span class="qty-unit"> kg</span></output>
+      ${btn("inc", 1, "Bir kilo artır", !fits(1))}
+    </div>
+    <div class="stepper stepper-kg${big ? " stepper-big" : ""}">
+      ${btn("dec", 0.1, "100 gram azalt", q < 0.1 - 1e-9, q - 0.1 <= 1e-9)}
+      <output>${g}<span class="qty-unit"> g</span></output>
+      ${btn("inc", 0.1, "100 gram artır", !fits(0.1))}
+    </div>
   </div>`;
 }
 
@@ -82,10 +105,12 @@ export function refreshQty(id) {
   const p = S.byId.get(id);
   if (!p) return;
   for (const slot of document.querySelectorAll(`[data-qty="${id}"]`)) {
-    const hadFocus = slot.contains(document.activeElement) ? document.activeElement.dataset.action : null;
+    const a = slot.contains(document.activeElement) ? document.activeElement.dataset : null;
+    const hadFocus = a ? a.action : null;
     slot.innerHTML = qtyControl(p, { big: slot.dataset.big === "1" });
     if (hadFocus) {
-      const target = slot.querySelector(`[data-action="${hadFocus}"]:not([disabled])`) || slot.querySelector("button:not([disabled])");
+      const sel = `[data-action="${hadFocus}"]${a.step ? `[data-step="${a.step}"]` : ""}:not([disabled])`;
+      const target = slot.querySelector(sel) || slot.querySelector(`[data-action="${hadFocus}"]:not([disabled])`) || slot.querySelector("button:not([disabled])");
       target?.focus();
     }
   }
@@ -381,7 +406,11 @@ export function catalogView(r) {
       <h1 class="page-h1">${esc(title)}</h1>
       <p class="result-count" role="status">${list.length} ürün</p>
     </div>
-    <nav class="tabs" aria-label="Reyonlar"><div class="tabs-track">${tabs}</div></nav>
+    <nav class="tabs" aria-label="Reyonlar">
+      <button class="tabs-arrow tabs-prev" type="button" data-action="tabs-scroll" data-dir="-1" aria-label="Önceki reyonlar" hidden>${icon("left")}</button>
+      <div class="tabs-track">${tabs}</div>
+      <button class="tabs-arrow tabs-next" type="button" data-action="tabs-scroll" data-dir="1" aria-label="Sonraki reyonlar" hidden>${icon("right")}</button>
+    </nav>
     <div class="toolbar">
       <a class="chip" href="${base}${qs({ indirim: r.onlyDiscount ? null : "1" })}" aria-pressed="${r.onlyDiscount}" role="button" aria-label="Yalnızca indirimdekiler">${icon("tag")}İndirimdekiler</a>
       <label class="sort"><span class="sr-only">Sıralama</span>
@@ -406,7 +435,7 @@ export function productDialogHtml(p) {
       ${p.brand ? `<p class="pcard-brand">${esc(p.brand)}</p>` : ""}
       <h2 class="pd-title" id="pdTitle">${esc(p.name)}</h2>
       <div class="pd-price">${priceHtml(p)}${save ? `<p class="pd-save">${tl(save)} daha ucuz</p>` : ""}</div>
-      <p class="pd-unit">Satış birimi: ${esc(p.unit || "adet")}${p.maxQty && p.maxQty < 99 && !p.soldOut ? `. Tek siparişte en fazla ${p.maxQty}.` : ""}</p>
+      <p class="pd-unit">Satış birimi: ${esc(p.unit || "adet")}${p.unit === "kg" ? " (kilo ve 100 gramlık adımlarla seçilir, örn. 1 kg 500 g; tartılınca tutar az farkla değişebilir)" : ""}${p.maxQty && p.maxQty < 99 && !p.soldOut ? `. Tek siparişte en fazla ${p.maxQty}.` : ""}</p>
       ${p.description ? `<p class="pd-desc">${esc(p.description)}</p>` : ""}
       <div class="pd-actions">
         <div class="qty-slot" data-qty="${p.id}" data-big="1">${qtyControl(p, { big: true })}</div>

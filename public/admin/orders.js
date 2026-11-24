@@ -9,6 +9,11 @@ import { onLive, startLive, stopLive, liveState } from "./live.js";
 
 // ---------- Etiketler ----------
 const TABS = [["aktif", "Aktif"], ["Yeni", "Yeni"], ["Hazırlanıyor", "Hazırlanıyor"], ["Yolda", "Yolda"], ["Teslim edildi", "Teslim edildi"], ["İptal", "İptal"], ["", "Tümü"]];
+// Miktar: kiloluk üründe düğmeler yarım kilo, elle 100 g hassasiyet (1,3 kg); diğerlerinde tam adet
+const qStep = (unit) => (unit === "kg" ? 0.5 : 1);
+const qRound = (n, unit) => (unit === "kg" ? Math.round(n * 10) / 10 : Math.floor(n));
+const fq = (q) => String(q).replace(".", ",");
+const unitOf = (id) => (state.products.find((x) => x.id === id) || {}).unit;
 const BADGE = { Yeni: "b-new", Hazırlanıyor: "b-prep", Yolda: "b-road", "Teslim edildi": "b-done", İptal: "b-cancel" };
 const SUBST = { ara: "Beni arayın", benzer: "Benzeriyle değiştirin", cikar: "Siparişten çıkarın" };
 const FLOW = ["Yeni", "Hazırlanıyor", "Yolda", "Teslim edildi"];
@@ -792,7 +797,7 @@ function returnsHtml(o) {
     <div class="mini-list">${list.slice().reverse().map((r) => `<div class="rr-card ${r.status === "Yeni" ? "is-new" : ""}">
       <div class="row-flex"><b>Talep ${o.id}-${r.id}</b><span class="badge ${RR_BADGE[r.status] || ""}">${esc(r.status)}</span><span class="grow"></span><button type="button" class="btn btn-sm" data-drr="${r.id}">${icon("edit", "i-sm")} İşle</button></div>
       <div class="msg">${esc(r.message || "")}</div>
-      ${(r.items || []).length ? `<div class="small">${r.items.map((i) => `${i.qty} × ${esc(nm(i.productId))}`).join(", ")}</div>` : ""}
+      ${(r.items || []).length ? `<div class="small">${r.items.map((i) => `${fq(i.qty)} × ${esc(nm(i.productId))}`).join(", ")}</div>` : ""}
       ${r.adminNote ? `<div class="small"><b>Not:</b> ${esc(r.adminNote)}</div>` : ""}
       <div class="meta"><span>Geldi: ${fmtDateTime(r.at)}</span>${r.updatedAt ? `<span>Son işlem: ${esc(r.by || "")} · ${fmtDateTime(r.updatedAt)}</span>` : ""}</div>
     </div>`).join("")}</div>
@@ -861,7 +866,7 @@ function itemsHtml(o) {
   // Personel yalnızca hazırlık süren (aktif) siparişin kalemlerini düzenler; teslim edilmiş / arşivlenmiş sipariş yöneticide
   const canEdit = o.status !== "İptal" && !isMasked(o) && (isAdmin() || ACTIVE.includes(o.status));
   return `<h4>Ürünler (${itemCount(o)}) ${canEdit ? `<button type="button" class="btn btn-sm" data-dedit>${icon("edit", "i-sm")} Düzenle</button>` : ""}</h4>
-    <table class="items-tbl"><tbody>${o.items.map((i) => `<tr><td class="q">${i.qty} ${i.unit === "kg" ? "kg" : "×"}</td><td>${esc(i.name)}<div class="small muted">${tl(i.price)} / ${esc(i.unit)}</div></td><td class="p">${tl(i.price * i.qty)}</td></tr>`).join("")}</tbody></table>
+    <table class="items-tbl"><tbody>${o.items.map((i) => `<tr><td class="q">${fq(i.qty)} ${i.unit === "kg" ? "kg" : "×"}</td><td>${esc(i.name)}<div class="small muted">${tl(i.price)} / ${esc(i.unit)}</div></td><td class="p">${tl(i.price * i.qty)}</td></tr>`).join("")}</tbody></table>
     <div class="totals">
       <div><span>Ara toplam</span><span>${tl(o.subtotal)}</span></div>
       ${o.discount ? `<div><span>İndirim${o.couponCode ? ` (${esc(o.couponCode)})` : ""}</span><span>−${tl(o.discount)}</span></div>` : ""}
@@ -875,7 +880,7 @@ function editItemsHtml() {
   return `<h4>Ürünleri düzenle</h4>
     <div class="edit-items">${ed.lines.map((l, i) => `<div class="edit-item">
       <div class="nm ${l.qty === 0 ? "muted" : ""}" style="${l.qty === 0 ? "text-decoration:line-through" : ""}">${esc(l.name)}${l.isNew ? ' <span class="badge b-ok">yeni</span>' : ""}<div class="small muted">${tl(l.price)} / ${esc(l.unit)}</div></div>
-      <div class="qty-step"><button type="button" data-q="${i}" data-d="-1" aria-label="Azalt">${icon("minus", "i-sm")}</button><input inputmode="numeric" data-qi="${i}" value="${l.qty}" aria-label="${esc(l.name)} adet"><button type="button" data-q="${i}" data-d="1" aria-label="Artır">${icon("plus", "i-sm")}</button></div>
+      <div class="qty-step"><button type="button" data-q="${i}" data-d="-1" aria-label="Azalt">${icon("minus", "i-sm")}</button><input inputmode="${l.unit === "kg" ? "decimal" : "numeric"}" data-qi="${i}" value="${fq(l.qty)}" aria-label="${esc(l.name)} adet"><button type="button" data-q="${i}" data-d="1" aria-label="Artır">${icon("plus", "i-sm")}</button></div>
       <button type="button" class="icon-btn sm danger" data-qrm="${i}" aria-label="Çıkar">${icon("trash", "i-sm")}</button>
     </div>`).join("")}</div>
     <div class="picker mt">
@@ -928,7 +933,7 @@ function bindDetail(slot, o) {
     if (t.hasAttribute("data-dsaveitems")) return saveItems(o, t);
     if (t.dataset.q !== undefined) {
       const l = os.editing.lines[Number(t.dataset.q)];
-      l.qty = Math.max(0, Math.min(99, l.qty + Number(t.dataset.d)));
+      l.qty = Math.max(0, Math.min(99, qRound(l.qty + Number(t.dataset.d) * qStep(l.unit), l.unit)));
       return rerenderItems(o);
     }
     if (t.dataset.qrm !== undefined) {
@@ -940,7 +945,7 @@ function bindDetail(slot, o) {
     if (t.dataset.addp) {
       const p = state.products.find((x) => x.id === Number(t.dataset.addp));
       const ex = os.editing.lines.find((l) => l.productId === p.id);
-      if (ex) ex.qty = Math.min(99, ex.qty + 1);
+      if (ex) ex.qty = Math.min(99, ex.qty + qStep(ex.unit));
       else os.editing.lines.push({ productId: p.id, name: p.name, unit: p.unit, price: p.price, qty: 1, isNew: true, orig: 0 });
       return rerenderItems(o, true);
     }
@@ -955,7 +960,7 @@ function bindDetail(slot, o) {
     }
     if (e.target.dataset.qi !== undefined) {
       const l = os.editing.lines[Number(e.target.dataset.qi)];
-      const n = Math.floor(Number(e.target.value));
+      const n = qRound(Number(String(e.target.value).replace(",", ".")), l.unit);
       if (Number.isFinite(n)) l.qty = Math.max(0, Math.min(99, n));
     }
     if (e.target.id === "odAdd") searchProducts(e.target.value);
@@ -1104,7 +1109,7 @@ export function printReceipts(orders) {
       <p>Tel: ${esc(fmtPhone(c.phone))}</p>
       ${o.type !== "gelal" ? `<p>Bölge: ${esc(c.zoneName || "-")}</p><p style="white-space:pre-line">${esc(c.address)}</p>` : ""}
       <hr class="rc-hr">
-      ${o.items.map((i) => `<div class="rc-item"><span class="q">${i.qty}${i.unit === "kg" ? "kg" : "x"}</span><span>${esc(i.name)}</span><span>${tl(i.price * i.qty)}</span></div>${CAYMA_SHORT[i.caymaDurumu] ? `<div class="rc-cay">${CAYMA_SHORT[i.caymaDurumu]}</div>` : ""}`).join("")}
+      ${o.items.map((i) => `<div class="rc-item"><span class="q">${fq(i.qty)}${i.unit === "kg" ? "kg" : "x"}</span><span>${esc(i.name)}</span><span>${tl(i.price * i.qty)}</span></div>${CAYMA_SHORT[i.caymaDurumu] ? `<div class="rc-cay">${CAYMA_SHORT[i.caymaDurumu]}</div>` : ""}`).join("")}
       <hr class="rc-hr">
       ${line("Ara toplam", tl(o.subtotal))}
       ${o.discount ? line(`İndirim${o.couponCode ? ` (${esc(o.couponCode)})` : ""}`, `-${tl(o.discount)}`) : ""}
@@ -1195,7 +1200,7 @@ async function manualOrder() {
         const ap = e.target.closest("[data-mop]");
         if (ap) {
           const id = Number(ap.dataset.mop);
-          cart.set(id, Math.min(99, (cart.get(id) || 0) + 1));
+          cart.set(id, Math.min(99, cart.has(id) ? cart.get(id) + qStep(unitOf(id)) : 1));
           $("#moSearch").value = ""; $("#moRes").hidden = true; $("#moSearch").focus();
           renderCart(); requote();
           return;
@@ -1203,7 +1208,7 @@ async function manualOrder() {
         const q = e.target.closest("[data-mq]");
         if (q) {
           const id = Number(q.dataset.mq);
-          const n = (cart.get(id) || 0) + Number(q.dataset.d);
+          const n = (cart.get(id) || 0) + Number(q.dataset.d) * qStep(unitOf(id));
           if (n <= 0) cart.delete(id); else cart.set(id, Math.min(99, n));
           renderCart(); requote();
         }
@@ -1251,7 +1256,7 @@ async function manualOrder() {
     if (!box) return;
     box.innerHTML = cart.size ? `<table class="items-tbl"><tbody>${[...cart].map(([id, q]) => {
       const p = state.products.find((x) => x.id === id) || { name: `#${id}`, price: 0, unit: "adet" };
-      return `<tr><td>${esc(p.name)}<div class="small muted">${tl(p.price)} / ${esc(p.unit)}</div></td><td class="p"><div class="qty-step"><button type="button" data-mq="${id}" data-d="-1" aria-label="Azalt">${icon("minus", "i-sm")}</button><input value="${q}" readonly aria-label="Adet"><button type="button" data-mq="${id}" data-d="1" aria-label="Artır">${icon("plus", "i-sm")}</button></div></td></tr>`;
+      return `<tr><td>${esc(p.name)}<div class="small muted">${tl(p.price)} / ${esc(p.unit)}</div></td><td class="p"><div class="qty-step"><button type="button" data-mq="${id}" data-d="-1" aria-label="Azalt">${icon("minus", "i-sm")}</button><input value="${fq(q)}${p.unit === "kg" ? " kg" : ""}" readonly aria-label="Miktar"><button type="button" data-mq="${id}" data-d="1" aria-label="Artır">${icon("plus", "i-sm")}</button></div></td></tr>`;
     }).join("")}</tbody></table>` : `<div class="callout">${icon("info")}<div>Sepet boş. Yukarıdan ürün arayıp ekleyin.</div></div>`;
   }
 }

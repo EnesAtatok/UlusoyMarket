@@ -1,5 +1,5 @@
 // Ulusoy Market — mağaza ön yüzü (bağımlılıksız, ES modülleri). Tek dayanak: docs/API.md
-import { $, $$, esc, icon, api, toast, telHref, waHref } from "./js/lib.js";
+import { $, $$, esc, icon, api, toast, telHref, waHref, debounce, reducedMotion, qtyStep, fmtQty } from "./js/lib.js";
 import {
   S, on, emit, setStore, setQty, toggleFav, setDelivery, setCoupon, saveProfile, requestQuote, cartCount, status,
   storeInfo, zones,
@@ -94,7 +94,8 @@ function render({ keepScroll = false } = {}) {
   document.title = `${t ? `${t} · ` : ""}${storeInfo().name || "Ulusoy Market"}${t ? "" : ` · ${storeInfo().slogan || ""}`}`;
 
   for (const a of $$("[data-nav]")) {
-    if (a.dataset.nav === NAV_OF[route.name]) a.setAttribute("aria-current", "page");
+    const navKey = route.name === "catalog" && route.favs ? "favoriler" : NAV_OF[route.name];
+    if (a.dataset.nav === navKey) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
 
@@ -136,7 +137,24 @@ function scrollActiveTab() {
     const track = tab.parentElement;
     track.scrollLeft = tab.offsetLeft - 16;
   }
+  updateTabArrows();
 }
+
+// Reyon okları: yalnızca o yönde kaydırılacak sekme varsa görünür
+function updateTabArrows() {
+  for (const nav of main.querySelectorAll(".tabs")) {
+    const track = nav.querySelector(".tabs-track");
+    if (!track) continue;
+    const max = track.scrollWidth - track.clientWidth;
+    const prev = nav.querySelector(".tabs-prev");
+    const next = nav.querySelector(".tabs-next");
+    if (prev) prev.hidden = track.scrollLeft <= 4;
+    if (next) next.hidden = track.scrollLeft >= max - 4;
+  }
+}
+const updateTabArrowsSoon = debounce(updateTabArrows, 60);
+document.addEventListener("scroll", (e) => { if (e.target.classList?.contains("tabs-track")) updateTabArrowsSoon(); }, true);
+window.addEventListener("resize", updateTabArrowsSoon);
 
 function notFound() {
   return `<div class="page-pad narrow"><div class="empty"><p class="empty-title">Bu sayfa bulunamadı.</p><p>Bağlantı eskimiş olabilir.</p><p class="empty-actions"><a class="btn btn-primary" href="#/">Ana sayfaya dön</a></p></div></div>`;
@@ -283,6 +301,8 @@ function updateBadges() {
     b.textContent = a;
   }
   for (const l of $$('[data-nav="sepet"]')) l.setAttribute("aria-label", n ? `Sepet, ${n} ürün` : "Sepet, boş");
+  const f = S.favs.size; // sayı yalnızca ekran okuyucu için; görünür rozet yok
+  for (const l of $$('[data-nav="favoriler"]')) l.setAttribute("aria-label", f ? `Favorilerim, ${f} ürün` : "Favorilerim, boş");
   for (const l of $$('[data-nav="siparislerim"]')) l.setAttribute("aria-label", a ? `Siparişlerim, ${a} süren sipariş` : "Siparişlerim");
 }
 
@@ -440,6 +460,7 @@ on("quoteLoading", () => {
 });
 on("favs", (id) => {
   for (const b of $$(`[data-action="fav"][data-id="${id}"]`)) b.setAttribute("aria-pressed", S.favs.has(id));
+  updateBadges();
 });
 on("orders", (d = {}) => {
   updateBadges();
@@ -479,15 +500,22 @@ document.addEventListener("click", (e) => {
     case "inc": {
       const p = S.byId.get(id);
       const before = S.cart[id] || 0;
-      const q = setQty(id, before + 1);
-      if (!before && q) toast(`Sepete eklendi: ${p.name}`);
-      else if (q === before) toast(`Bu üründen en fazla ${q} adet alınabilir.`, { tone: "warn" });
+      // Kiloluk ürün ilk eklemede 1 kg gelir; sonra kilo düğmesi 1 kg, gram düğmesi 100 g artırır
+      const q = setQty(id, before ? before + (Number(el.dataset.step) || qtyStep(p)) : 1);
+      if (!before && q) toast(`Sepete eklendi: ${p.name}${p.unit === "kg" ? ` (${fmtQty(q)} kg)` : ""}`);
+      else if (q === before) toast(`Bu üründen en fazla ${fmtQty(q)} ${p.unit === "kg" ? "kg" : "adet"} alınabilir.`, { tone: "warn" });
       break;
     }
     case "dec": {
+      const p = S.byId.get(id);
       const before = S.cart[id] || 0;
-      setQty(id, before - 1);
-      if (before === 1) toast(`Sepetten çıkarıldı: ${S.byId.get(id)?.name || ""}`);
+      const q = setQty(id, before - (Number(el.dataset.step) || qtyStep(p)));
+      if (before && !q) toast(`Sepetten çıkarıldı: ${p?.name || ""}`);
+      break;
+    }
+    case "tabs-scroll": {
+      const track = el.parentElement.querySelector(".tabs-track");
+      if (track) track.scrollBy({ left: Number(el.dataset.dir) * Math.max(160, track.clientWidth * 0.7), behavior: reducedMotion() ? "auto" : "smooth" });
       break;
     }
     case "fav": {

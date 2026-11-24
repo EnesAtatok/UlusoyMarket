@@ -1,5 +1,5 @@
 // Uygulama durumu, sepet işlemleri ve sunucu teklifi (POST /api/cart/quote).
-import { load, save, api, debounce } from "./lib.js";
+import { load, save, api, debounce, roundQty } from "./lib.js";
 
 const listeners = {};
 export const on = (ev, fn) => (listeners[ev] ||= []).push(fn);
@@ -50,7 +50,7 @@ function sanitizeCartShape(c) {
   const out = {};
   if (c && typeof c === "object" && !Array.isArray(c)) {
     for (const [k, v] of Object.entries(c)) {
-      const q = Math.floor(Number(v));
+      const q = Math.round(Number(v) * 10) / 10; // ürün henüz bilinmiyor: 100 g'a yuvarla, setStore ürüne göre düzeltir
       if (Number(k) > 0 && q > 0) out[k] = Math.min(q, 99);
     }
   }
@@ -67,11 +67,12 @@ export function setStore(data) {
   let changed = false;
   for (const id of Object.keys(S.cart)) {
     const p = S.byId.get(Number(id));
-    if (!p || p.soldOut || !p.maxQty) {
+    const fixed = p ? Math.min(roundQty(S.cart[id], p), p.maxQty || 0) : 0;
+    if (!p || p.soldOut || !p.maxQty || fixed <= 0) {
       delete S.cart[id];
       changed = true;
-    } else if (S.cart[id] > p.maxQty) {
-      S.cart[id] = p.maxQty;
+    } else if (S.cart[id] !== fixed) {
+      S.cart[id] = fixed; // sınıra çekilir; adetle satılan üründe kesirli miktar tam sayıya iner
       changed = true;
     }
   }
@@ -93,7 +94,7 @@ export function saveCart() {
 export const qtyOf = (id) => S.cart[id] || 0;
 export function setQty(id, qty, { silent = false } = {}) {
   const p = S.byId.get(Number(id));
-  let q = Math.max(0, Math.floor(qty));
+  let q = Math.max(0, p && p.unit === "kg" ? roundQty(qty, p) : Math.floor(qty));
   if (!p || p.soldOut) q = 0;
   else q = Math.min(q, p.maxQty || 99);
   if (q <= 0) delete S.cart[id];
@@ -111,7 +112,8 @@ export const cartLines = () =>
   Object.entries(S.cart)
     .map(([id, qty]) => ({ product: S.byId.get(Number(id)), qty }))
     .filter((l) => l.product);
-export const cartCount = () => cartLines().reduce((s, l) => s + l.qty, 0);
+// Rozetteki sayı: kiloluk ürün miktarından bağımsız 1 kalem sayılır (1,5 kg muz → 1)
+export const cartCount = () => cartLines().reduce((s, l) => s + (l.product.unit === "kg" ? 1 : l.qty), 0);
 /** Yalnızca anlık gösterim için; ödeme öncesi tutarı sunucu teklifi belirler */
 export const cartLocalTotal = () => Math.round(cartLines().reduce((s, l) => s + l.product.price * l.qty, 0) * 100) / 100;
 
